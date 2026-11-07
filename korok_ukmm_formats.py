@@ -5,6 +5,8 @@ from CBOR), the vanilla file (decompressed bytes, or None for a new file), and
 returns the uncompressed game file. Ported from uk-content
 (https://github.com/NiceneNerd/ukmm, GPL-3.0); see korok_ukmm_native.py.
 """
+import pathlib
+
 import oead
 
 from korok_ukmm_native import (UnsupportedResource, byml_from_cbor, byml_to_binary,
@@ -63,10 +65,104 @@ def _simple_byml(data, vanilla, canon):
     return byml_to_binary(diff)
 
 
-# ------------------------------------------------------------- game text
-def build_text_pack(conv, file):
-    """Pack/Bootup_<lang>.pack: UKMM rebuilds it from the MessagePack resource."""
-    raise UnsupportedResource("MessagePack", file)
+# ------------------------------------------------------------- game text (MessagePack)
+def _msyt_run(args):
+    import korok_merge
+    exe = korok_merge.msyt_path()
+    if exe is None:
+        raise UnsupportedResource("MessagePack (needs: pip install pymsyt)", "")
+    korok_merge._run_msyt(exe, args)
+
+
+def _game_languages(dump):
+    import re
+    from korok_ukmm_native import _filemap
+    langs = []
+    for k in _filemap():
+        m = re.fullmatch(r"Pack/Bootup_([A-Za-z]{4})\.pack", k)
+        if m and m.group(1) not in langs and dump.get_bytes(k) is not None:
+            langs.append(m.group(1))
+    return langs
+
+
+def _merge_msyt(base: dict, diff: dict) -> dict:
+    """Msyt::merge: entries of the diff replace/extend the base's; group_count follows,
+    the other MSBT header fields (flattened into the document) stay the base's."""
+    entries = dict(base.get("entries") or {})
+    entries.update(diff.get("entries") or {})
+    out = {k: v for k, v in base.items() if k != "entries"}
+    out["group_count"] = len(entries)
+    out["entries"] = entries
+    return out
+
+
+def build_text_packs(conv):
+    """unpack_texts for every language in the game: vanilla Msg_<lang> + the mod's
+    MessagePack (same language, else same short code, else any) -> Bootup_<lang>.pack."""
+    import json
+    import shutil
+    import tempfile
+    import yaml
+    from korok_ukmm_native import canonicalize, compress_if, unyaz
+    modded = {}
+    for f in conv.pkg.content_files:
+        if f.startswith("Pack/Bootup_") and f.endswith(".pack"):
+            lang = f[len("Pack/Bootup_"):-len(".pack")]
+            res = conv.pkg.get(canonicalize(f"Message/Msg_{lang}.product.ssarc"))
+            if res is not None and "Mergeable" in res and "MessagePack" in res["Mergeable"]:
+                modded[lang] = res["Mergeable"]["MessagePack"]
+    if not modded:
+        return {}
+    out = {}
+    for lang in _game_languages(conv.dump):
+        src = next((l for l in modded if l == lang), None) or \
+            next((l for l in modded if l[-2:] == lang[-2:]), None) or next(iter(modded))
+        diff = {name: json.loads(text) for name, text in modded[src].items()}
+        boot = conv.dump.get_bytes(f"Pack/Bootup_{lang}.pack")
+        msg_name = f"Message/Msg_{lang}.product.ssarc"
+        vanilla = oead.Sarc(boot).get_file(msg_name) if boot is not None else None
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_ukmm_text_"))
+        try:
+            in_dir, yml_dir, new_dir, msb_dir = (tmp / d for d in ("in", "yml", "new", "out"))
+            for d in (in_dir, yml_dir, new_dir, msb_dir):
+                d.mkdir()
+            base_files = {}
+            if vanilla is not None:
+                vs = oead.Sarc(unyaz(bytes(vanilla.data)))
+                for f in vs.get_files():
+                    if f.name.endswith(".msbt"):
+                        p = in_dir / f.name
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_bytes(bytes(f.data))
+                        base_files[f.name[:-5]] = None
+                if base_files:
+                    _msyt_run(["export", "-d", "-o", str(yml_dir), str(in_dir)])
+            names = sorted(set(base_files) | set(diff))
+            for name in names:
+                if name in diff and name in base_files:
+                    base = yaml.safe_load((yml_dir / f"{name}.msyt").read_text(encoding="utf-8")) or {}
+                    doc = _merge_msyt(base, diff[name])
+                elif name in diff:
+                    doc = diff[name]
+                else:
+                    doc = None
+                if doc is not None:
+                    t = new_dir / f"{name}.msyt"
+                    t.parent.mkdir(parents=True, exist_ok=True)
+                    t.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            if any(new_dir.rglob("*.msyt")):
+                _msyt_run(["create", "-d", "-B", "-p", "wiiu", "-o", str(msb_dir), str(new_dir)])
+            w = oead.SarcWriter(endian=oead.Endianness.Big)
+            for name in names:
+                built = msb_dir / f"{name}.msbt"
+                w.files[f"{name}.msbt"] = built.read_bytes() if built.exists() else (in_dir / f"{name}.msbt").read_bytes()
+            msg = compress_if(bytes(w.write()[1]), msg_name)
+            pw = oead.SarcWriter(endian=oead.Endianness.Big)
+            pw.files[msg_name] = msg
+            out[f"Pack/Bootup_{lang}.pack"] = bytes(pw.write()[1])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return out
 
 
 # ------------------------------------------------------------- helpers
@@ -1523,3 +1619,35 @@ def savedata_build(data, vanilla, canon):
 
 
 BUILDERS["SaveDataPack"] = savedata_build
+
+
+# ------------------------------------------------------------- MapUnit (*_Static/_Dynamic/CDungeon .smubin)
+def _u32(v) -> int:
+    return int(v) & 0xFFFFFFFF
+
+
+def _unit_entries(arr):
+    return {_u32(o["HashId"]): [o, False] for o in arr}
+
+
+def mapunit_build(data, vanilla, canon):
+    d_objs = _byml_dmap(data.get("objects") or {}, _u32)
+    d_rails = _byml_dmap(data.get("rails") or {}, _u32)
+    if vanilla is None:
+        objs = {k: v for k, v in sorted(d_objs.items()) if not v[1]}
+        rails = {k: v for k, v in sorted(d_rails.items()) if not v[1]}
+    else:
+        root = oead.byml.from_binary(vanilla)
+        objs = dmap_merge(_unit_entries(need(root.get("Objs"), "Map unit missing objs")), d_objs, sort=True)
+        rails = dmap_merge(_unit_entries(need(root.get("Rails"), "Map unit missing rails")), d_rails, sort=True)
+    out = oead.byml.Hash()
+    out["Objs"] = oead.byml.Array([v[0] for v in objs.values()])
+    out["Rails"] = oead.byml.Array([v[0] for v in rails.values()])
+    # MapUnit::merge takes the diff's location values as they are (None drops them)
+    for key, field in (("LocationPosX", "pos_x"), ("LocationPosZ", "pos_z"), ("LocationSize", "size")):
+        if data.get(field) is not None:
+            out[key] = oead.F32(float(data[field]))
+    return byml_to_binary(out)
+
+
+BUILDERS["MapUnit"] = mapunit_build

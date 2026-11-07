@@ -475,27 +475,38 @@ class Converter:
         """Writes out_dir/content/... and out_dir/aoc/0010/... like a UKMM deploy."""
         out_dir = pathlib.Path(out_dir)
         jobs = [(f, False) for f in self.pkg.content_files] + [(f, True) for f in self.pkg.aoc_files]
+        texts_done = False
         for i, (f, aoc) in enumerate(jobs):
             if progress:
                 progress(i / max(len(jobs), 1), f)
             if f.startswith("Pack/Bootup_") and not aoc:
-                # UKMM rebuilds the text packs in a separate step (unpack_texts)
-                try:
-                    data = self.fmt.build_text_pack(self, f)
-                except UnsupportedResource as e:
-                    self.unsupported[e.kind].append(e.canon or f)
+                # UKMM rebuilds the text packs in a separate step (unpack_texts), for every
+                # language of the game at once
+                if texts_done:
                     continue
-                if data is None:
-                    continue
-            else:
+                texts_done = True
                 try:
-                    data = self.build_file(f, aoc)
+                    packs = self.fmt.build_text_packs(self)
                 except UnsupportedResource as e:
                     self.unsupported[e.kind].append(e.canon or f)
                     continue
                 except Exception as e:
-                    self.problems.append(f"{f}: {type(e).__name__}: {e}")
+                    self.problems.append(f"game text: {type(e).__name__}: {e}")
                     continue
+                for rel, data in packs.items():
+                    dest = out_dir / "content" / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(data)
+                    self.built += 1
+                continue
+            try:
+                data = self.build_file(f, aoc)
+            except UnsupportedResource as e:
+                self.unsupported[e.kind].append(e.canon or f)
+                continue
+            except Exception as e:
+                self.problems.append(f"{f}: {type(e).__name__}: {e}")
+                continue
             dest = out_dir / ("aoc/0010" if aoc else "content") / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(compress_if(data, f))
