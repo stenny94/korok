@@ -1,0 +1,8 @@
+# Korok - Python dependencies (Windows, Python 3.10+)
+# Install with:  pip install -r requirements.txt
+
+PyQt6>=6.5          # GUI
+oead>=1.2           # BYML / AAMP / SARC / Yaz0 handling (merge logs, packs, save editor)
+PyYAML>=6.0         # event info (eventinfo.yml) merging
+pymsyt>=1.0         # bundled msyt tool, needed to apply dialogue (texts.json)
+py7zr>=0.20         # import of .7z mod archives
