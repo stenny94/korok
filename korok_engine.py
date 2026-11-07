@@ -92,6 +92,7 @@ class KorokEngine:
 
         self.last_build_skipped = False
         self.last_imported_name = ""
+        self.ukmm_option_choices = {}   # {archive path: [option paths]} picked in the UI
         self.state = self._load_state()
 
         saved_path = self.load_config_path()
@@ -296,7 +297,7 @@ default = true
         return roots[0] if roots else None
 
     def import_mod_archive(self, file_path: str, mod_display_name: str,
-                           _option_of: str = "") -> list:
+                           _option_of: str = "", ukmm_options=None) -> list:
         """Stages a mod. Returns a list of warning strings.
         _option_of: internal - set when importing an extra option folder of a mod,
         so it gets its own name and is imported disabled."""
@@ -322,7 +323,10 @@ default = true
                 if ukmm_name:
                     safe_name = self._safe_name(ukmm_name)
                     staged_mod_path = self.staging_dir / safe_name
-                root, force_disabled = self._convert_ukmm(archive_path, temp_extract, safe_name, warnings)
+                if ukmm_options is None:
+                    ukmm_options = self.ukmm_option_choices.get(str(archive_path))
+                root, force_disabled = self._convert_ukmm(archive_path, temp_extract, safe_name, warnings,
+                                                          ukmm_options)
                 from_dir = True
                 roots = [root]
             else:
@@ -430,7 +434,17 @@ default = true
 
         return warnings
 
-    def _convert_ukmm(self, archive_path, temp_dir, name, warnings):
+    @staticmethod
+    def ukmm_option_groups(path) -> list:
+        """Install options of a UKMM package (empty if none or unreadable)."""
+        try:
+            if korok_ukmm_native.available() and zipfile.is_zipfile(path):
+                return korok_ukmm_native.package_option_groups(path)
+        except Exception:
+            pass
+        return []
+
+    def _convert_ukmm(self, archive_path, temp_dir, name, warnings, options=None):
         """UKMM package -> folder with content/ and aoc/0010/. Korok's own reader first;
         UKMM itself (if installed) when the package uses something not ported yet.
         Returns (folder, import_disabled)."""
@@ -446,7 +460,7 @@ default = true
             try:
                 conv = korok_ukmm_native.convert_package(
                     archive_path, out, korok_ukmm_native.dump_from_cemu(self.user_dir),
-                    log=self._ukmm_log)
+                    log=self._ukmm_log, options=options)
             except Exception as e:
                 native_why = f"Korok's UKMM reader failed: {e}"
         if conv is not None:
@@ -454,34 +468,40 @@ default = true
             for kind, files in sorted(conv.unsupported.items()):
                 gaps.append(f"{kind} ({len(files)} file{'s' if len(files) != 1 else ''}, "
                             f"e.g. {files[0]})")
+            chosen = ""
             if conv.pkg.has_options:
-                gaps.append("install options (only the base files were used)")
+                names = {o["path"]: o["name"] for g in conv.pkg.option_groups() for o in g["options"]}
+                chosen = " Options used: " + (", ".join(names.get(o, o) for o in conv.pkg.options) or "none") + "."
             self._ukmm_log("Native UKMM conversion\n"
                            f"built: {conv.built}\nunsupported: {dict(conv.unsupported)}\n"
                            f"problems: {conv.problems}\n")
             if not gaps and not conv.problems:
                 warnings.append(
-                    f"'{name}' is a UKMM package; Korok rebuilt its {conv.built} game file(s) itself. "
+                    f"'{name}' is a UKMM package; Korok rebuilt its {conv.built} game file(s) itself.{chosen} "
                     "The result is already merged with the game files, so if another mod changes the "
                     "same files, whichever is lower in the load order wins.")
                 return out, False
             native_why = ("Korok's UKMM reader can't rebuild everything in this mod yet: "
                           + "; ".join(gaps + conv.problems[:5]))
         exe = self.ukmm_exe()
-        if exe is not None:
-            deployed = korok_ukmm.convert(archive_path, exe, log=self._ukmm_log)
-            warnings.append(
-                f"'{name}' is a UKMM package. {native_why}. It was converted with UKMM instead. "
-                "The result is already merged with the game files, so if another mod changes the "
-                "same files, whichever is lower in the load order wins.")
-            return deployed, False
+        ukmm_why = ""
+        if exe is not None and not (conv is not None and conv.pkg.has_options):
+            # (UKMM's command line refuses mods with install options)
+            try:
+                deployed = korok_ukmm.convert(archive_path, exe, log=self._ukmm_log)
+                warnings.append(
+                    f"'{name}' is a UKMM package. {native_why}. It was converted with UKMM instead. "
+                    "The result is already merged with the game files, so if another mod changes the "
+                    "same files, whichever is lower in the load order wins.")
+                return deployed, False
+            except Exception as e:
+                ukmm_why = f" UKMM couldn't convert it either: {str(e).splitlines()[0]}"
         if conv is None:
-            raise RuntimeError(f"Can't import this UKMM package. {native_why}. "
-                               "Installing UKMM (and pointing Korok at ukmm.exe) also works.")
+            raise RuntimeError(f"Can't import this UKMM package. {native_why}.{ukmm_why}")
         warnings.append(
-            f"'{name}' is a UKMM package. {native_why}. Those parts are MISSING, so it was imported "
-            "DISABLED. Install UKMM and re-import to convert it completely, or tick it to try it "
-            "as it is.")
+            f"'{name}' is a UKMM package. {native_why}.{ukmm_why}{chosen} Those parts are MISSING "
+            "(the game's own versions are used), so it was imported DISABLED. Tick it to try it "
+            "as it is, and send korok_ukmm.log so the missing formats can be added.")
         return out, True
 
     @staticmethod

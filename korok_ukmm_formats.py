@@ -108,16 +108,21 @@ def build_text_packs(conv):
     for f in conv.pkg.content_files:
         if f.startswith("Pack/Bootup_") and f.endswith(".pack"):
             lang = f[len("Pack/Bootup_"):-len(".pack")]
-            res = conv.pkg.get(canonicalize(f"Message/Msg_{lang}.product.ssarc"))
-            if res is not None and "Mergeable" in res and "MessagePack" in res["Mergeable"]:
-                modded[lang] = res["Mergeable"]["MessagePack"]
+            combined = {}
+            for res in conv.pkg.versions(canonicalize(f"Message/Msg_{lang}.product.ssarc")):
+                if "Mergeable" in res and "MessagePack" in res["Mergeable"]:
+                    for name, text in res["Mergeable"]["MessagePack"].items():
+                        doc = json.loads(text)
+                        combined[name] = _merge_msyt(combined[name], doc) if name in combined else doc
+            if combined:
+                modded[lang] = combined
     if not modded:
         return {}
     out = {}
     for lang in _game_languages(conv.dump):
         src = next((l for l in modded if l == lang), None) or \
             next((l for l in modded if l[-2:] == lang[-2:]), None) or next(iter(modded))
-        diff = {name: json.loads(text) for name, text in modded[src].items()}
+        diff = modded[src]
         boot = conv.dump.get_bytes(f"Pack/Bootup_{lang}.pack")
         msg_name = f"Message/Msg_{lang}.product.ssarc"
         vanilla = oead.Sarc(boot).get_file(msg_name) if boot is not None else None

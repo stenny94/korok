@@ -5,6 +5,12 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QRadioButton,
+    QScrollArea,
     QApplication,
     QCheckBox,
     QFileDialog,
@@ -37,6 +43,55 @@ from korok_tabs import InstancesTab, SaveEditorTab
 def display_name_for(file_path: str) -> str:
     p = pathlib.Path(file_path)
     return (p.name if p.is_dir() else p.stem).replace("_", " ")
+
+
+class UkmmOptionsDialog(QDialog):
+    """Lets the user pick a UKMM mod's install options (defaults preselected)."""
+
+    def __init__(self, mod_name: str, groups: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Options for {mod_name}")
+        self.resize(520, 480)
+        outer = QVBoxLayout(self)
+        outer.addWidget(QLabel(f"'{mod_name}' has install options. Pick the ones you want:"))
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        self._widgets = []          # (option path, button)
+        for g in groups:
+            box = QGroupBox(g["name"] + ("" if g["multiple"] else "  (pick one)"))
+            bl = QVBoxLayout(box)
+            if g.get("description"):
+                d = QLabel(g["description"])
+                d.setWordWrap(True)
+                bl.addWidget(d)
+            group = None if g["multiple"] else QButtonGroup(box)
+            if group is not None and not g["required"]:
+                none = QRadioButton("None")
+                none.setChecked(not g["defaults"])
+                group.addButton(none)
+                bl.addWidget(none)
+            for o in g["options"]:
+                b = QCheckBox(o["name"]) if g["multiple"] else QRadioButton(o["name"])
+                b.setChecked(o["path"] in g["defaults"])
+                if o.get("description"):
+                    b.setToolTip(o["description"])
+                if group is not None:
+                    group.addButton(b)
+                bl.addWidget(b)
+                self._widgets.append((o["path"], b))
+            lay.addWidget(box)
+        lay.addStretch(1)
+        area.setWidget(inner)
+        outer.addWidget(area, stretch=1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+
+    def chosen(self) -> list:
+        return [path for path, b in self._widgets if b.isChecked()]
 
 
 class InstallWorker(QThread):
@@ -592,7 +647,18 @@ class KorokUI(QMainWindow):
                 file_paths = [p for p in file_paths if not self.engine.is_ukmm_archive(p)]
                 if not file_paths:
                     return
-            self.start_job([("file", p) for p in file_paths])
+            keep = []
+            for p in file_paths:
+                if self.engine.is_ukmm_archive(p):
+                    groups = self.engine.ukmm_option_groups(p)
+                    if groups:
+                        dlg = UkmmOptionsDialog(display_name_for(p), groups, self)
+                        if dlg.exec() != QDialog.DialogCode.Accepted:
+                            continue          # cancelled: don't import this one
+                        self.engine.ukmm_option_choices[str(pathlib.Path(p))] = dlg.chosen()
+                keep.append(p)
+            if keep:
+                self.start_job([("file", p) for p in keep])
 
     def ensure_ukmm(self) -> bool:
         """UKMM packages are converted by running UKMM; make sure we know where ukmm.exe is."""

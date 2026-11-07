@@ -112,19 +112,40 @@ def is_mergeable_sarc(name: str, data: bytes) -> bool:
 
 
 # ------------------------------------------------------------- package
+def _untag(x):
+    """YAML with UKMM's serde tags (!Exclusive, !Specific ...) -> plain data;
+    a tagged value becomes {"_tag": name, **value} (or {"_tag": name, "value": v})."""
+    import korok_ukmm
+    if isinstance(x, korok_ukmm._Tagged):
+        v = _untag(x.value)
+        return {"_tag": x.tag.lstrip("!"), **v} if isinstance(v, dict) else {"_tag": x.tag.lstrip("!"), "value": v}
+    if isinstance(x, dict):
+        return {k: _untag(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_untag(v) for v in x]
+    return x
+
+
+def _load_tagged_yaml(text):
+    import korok_ukmm
+    return _untag(korok_ukmm._load_yaml(text)) or {}
+
+
 class Package:
-    def __init__(self, path):
+    def __init__(self, path, options=None):
         self.path = pathlib.Path(path)
         self.zip = zipfile.ZipFile(self.path)
         self._names = {n.rstrip("/"): n for n in self.zip.namelist()}
         lower = {k.lower(): v for k, v in self._names.items()}
-        self.meta = yaml.safe_load(self.zip.read(lower["meta.yml"]).decode("utf-8-sig").replace("!", "")) or {}
+        self.meta = _load_tagged_yaml(self.zip.read(lower["meta.yml"]).decode("utf-8-sig"))
         man = yaml.safe_load(self.zip.read(lower["manifest.yml"]).decode("utf-8-sig")) or {}
         self.content_files = list(man.get("content") or man.get("content_files") or [])
         self.aoc_files = list(man.get("aoc") or man.get("aoc_files") or [])
         self._dctx = zstandard.ZstdDecompressor(
             dict_data=zstandard.ZstdCompressionDict(DICT_PATH.read_bytes()))
         self._cache = {}
+        self.options = []                      # option folder paths in use, in order
+        self.set_options(self.default_options() if options is None else options)
 
     @property
     def name(self):
@@ -134,17 +155,46 @@ class Package:
     def has_options(self):
         return bool(self.meta.get("option_groups"))
 
-    def has(self, canon: str) -> bool:
-        return canon in self._names
+    def option_groups(self) -> list:
+        """[{name, description, multiple, required, defaults: [path], options: [{name, description, path}]}]"""
+        out = []
+        for g in self.meta.get("option_groups") or []:
+            multiple = (g.get("type") or g.get("_tag")) == "Multiple"
+            defaults = list(g.get("defaults") or []) if multiple else ([g["default"]] if g.get("default") else [])
+            opts = [{"name": str(o.get("name", "")), "description": str(o.get("description", "")),
+                     "path": str(o.get("path", ""))} for o in g.get("options") or []]
+            if not multiple and not defaults and g.get("required") and opts:
+                defaults = [opts[0]["path"]]
+            out.append({"name": str(g.get("name", "")), "description": str(g.get("description", "")),
+                        "multiple": multiple, "required": bool(g.get("required")),
+                        "defaults": [str(d) for d in defaults], "options": opts})
+        return out
 
-    def get(self, canon: str):
-        """Decoded ResourceData for a canonical name, or None if the mod doesn't change it."""
-        if canon in self._cache:
-            return self._cache[canon]
-        entry = self._names.get(canon)
-        if entry is None:
-            return None
-        raw = self.zip.read(entry)
+    def default_options(self) -> list:
+        return [d for g in self.option_groups() for d in g["defaults"]]
+
+    def set_options(self, paths):
+        """Use these option folders (ModReader with options): their manifests add files."""
+        valid = [o["path"] for g in self.option_groups() for o in g["options"]]
+        self.options = [p for p in valid if p in set(paths)]
+        content, aoc = list(self.content_files), list(self.aoc_files)
+        for opt in self.options:
+            entry = self._names.get(f"options/{opt}/manifest.yml")
+            if entry is None:
+                continue
+            man = yaml.safe_load(self.zip.read(entry).decode("utf-8-sig")) or {}
+            content += [f for f in (man.get("content") or []) if f not in content]
+            aoc += [f for f in (man.get("aoc") or []) if f not in aoc]
+        self.content_files, self.aoc_files = sorted(set(content)), sorted(set(aoc))
+        self._cache.clear()
+
+    def has(self, canon: str) -> bool:
+        return canon in self._names or any(f"options/{o}/{canon}" in self._names for o in self.options)
+
+    def _read(self, entry):
+        if entry in self._cache:
+            return self._cache[entry]
+        raw = self.zip.read(self._names[entry])
         try:
             data = self._dctx.decompress(raw, max_output_size=1 << 31)
         except zstandard.ZstdError:
@@ -152,8 +202,23 @@ class Package:
         res = cbor2.loads(data)
         if len(self._cache) > 64:
             self._cache.clear()
-        self._cache[canon] = res
+        self._cache[entry] = res
         return res
+
+    def versions(self, canon: str) -> list:
+        """ModReader::get_versions: the base version, then each enabled option's, in order."""
+        out = []
+        if canon in self._names:
+            out.append(self._read(canon))
+        for o in self.options:
+            e = f"options/{o}/{canon}"
+            if e in self._names:
+                out.append(self._read(e))
+        return out
+
+    def get(self, canon: str):
+        """The base version of a resource (no options), or None."""
+        return self._read(canon) if canon in self._names else None
 
     def close(self):
         self.zip.close()
@@ -423,30 +488,36 @@ class Converter:
         self.fmt = fmt
 
     def build_file(self, file: str, aoc: bool) -> bytes:
-        """ModUnpacker::build_file (one mod): returns the uncompressed game file."""
+        """ModUnpacker::build_file: vanilla, then each version from the mod (base files,
+        then enabled options) applied in order. Returns the uncompressed game file."""
         filepath = f"Aoc/0010/{file}" if aoc and not file.startswith("Aoc/0010/") else file
         canon = canonicalize(filepath)
-        res = self.pkg.get(canon)
+        versions = self.pkg.versions(canon)
         vanilla = self.dump.get_bytes(filepath)
-        if res is None and vanilla is None:
+        if not versions and vanilla is None:
             raise FileNotFoundError(f"No copy of {filepath} in the game files or the mod")
-
-        if res is not None and "Binary" in res:
-            return bytes(res["Binary"])
-        if res is not None and "Mergeable" in res:
-            (kind, data), = res["Mergeable"].items()
-            try:
-                return self.fmt.build(kind, data, vanilla, canon)
-            except UnsupportedResource as e:
-                self.unsupported[e.kind].append(canon)
-                if vanilla is not None:
-                    return vanilla            # keep the game working; the change is missing
-                raise
+        data = vanilla
+        sarc_diffs = []
+        for res in versions:
+            if "Binary" in res:
+                data, sarc_diffs = bytes(res["Binary"]), []
+            elif "Mergeable" in res:
+                (kind, mdata), = res["Mergeable"].items()
+                try:
+                    data = self.fmt.build(kind, mdata, data, canon)
+                except UnsupportedResource as e:
+                    self.unsupported[e.kind].append(canon)
+                    if data is None:
+                        raise
+                    # keep the game working; this change is missing
+            elif "Sarc" in res:
+                sarc_diffs.append(res["Sarc"])
+        if versions and not sarc_diffs and ("Binary" in versions[-1] or "Mergeable" in versions[-1]):
+            return data
         # SARC (changed file list, or unchanged archive whose files may be modded)
-        sarc_diff = res.get("Sarc") if res is not None else None
-        if sarc_diff is None and not (vanilla is not None and is_mergeable_sarc(canon, vanilla)):
-            return vanilla
-        return self.build_sarc(vanilla, sarc_diff, aoc, canon)
+        if not sarc_diffs and not (data is not None and is_mergeable_sarc(canon, data)):
+            return data
+        return self.build_sarc(data, sarc_diffs, aoc, canon)
 
     def _touched(self, name, raw, aoc, depth=0) -> bool:
         """Does the mod change this file, or anything inside it?"""
@@ -465,14 +536,16 @@ class Converter:
             return True
 
     def build_sarc(self, vanilla, diff, aoc, canon) -> bytes:
+        diffs = diff if isinstance(diff, list) else ([diff] if diff else [])
         if vanilla is not None:
             vs = oead.Sarc(vanilla)
             names = {f.name: False for f in vs.get_files()}
             alignment = vs.guess_min_alignment()
         else:
-            names, alignment = {}, int((diff or {}).get("alignment", 4))
-        for name, deleted in ((diff or {}).get("files") or {}).items():
-            names[str(name)] = bool(deleted)          # SortedDeleteSet::merge
+            names, alignment = {}, int((diffs[0] if diffs else {}).get("alignment", 4))
+        for dd in diffs:
+            for name, deleted in (dd.get("files") or {}).items():
+                names[str(name)] = bool(deleted)      # SortedDeleteSet::merge
         writer = oead.SarcWriter(endian=oead.Endianness.Big)
         try:
             writer.set_min_alignment(alignment)
@@ -669,12 +742,21 @@ def dump_from_cemu(user_dir, title_ids=("101c9400", "101c9500", "101c9300")):
                 [d for d in aoc if d.is_dir()])
 
 
-def convert_package(package_path, out_dir, dump: Dump, progress=None, log=None):
-    """Returns the Converter (see .built, .unsupported, .problems, .pkg)."""
+def package_option_groups(package_path) -> list:
+    pkg = Package(package_path)
+    try:
+        return pkg.option_groups()
+    finally:
+        pkg.close()
+
+
+def convert_package(package_path, out_dir, dump: Dump, progress=None, log=None, options=None):
+    """options: option folder paths to use (None = the mod's defaults).
+    Returns the Converter (see .built, .unsupported, .problems, .pkg)."""
     if not (dump.dirs[1] or dump.dirs[2]):
         raise FileNotFoundError("the game's files weren't found in Cemu's mlc01 folder "
                                 "(base game and v208 update must be installed there)")
-    pkg = Package(package_path)
+    pkg = Package(package_path, options)
     try:
         return Converter(pkg, dump, log=log).convert(pathlib.Path(out_dir), progress=progress)
     finally:
