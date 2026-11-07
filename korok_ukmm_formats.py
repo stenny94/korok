@@ -391,3 +391,526 @@ def recipe_to(m):
 
 
 typed("Recipe", recipe_from, recipe_merge, recipe_to)
+
+
+# ------------------------------------------------------------- #[derive(ParamData)] structs
+def _to_param(kind, v):
+    if kind == "s64":
+        return P(oead.FixedSafeString64(str(v)))
+    if kind == "s32":
+        return P(oead.FixedSafeString32(str(v)))
+    if kind == "s256":
+        return P(oead.FixedSafeString256(str(v)))
+    if kind == "str":
+        return P(str(v))
+    if kind == "bool":
+        return P(bool(v))
+    if kind == "f32":
+        return P(oead.F32(float(v)))
+    if kind == "i32":
+        return P(oead.S32(int(v)))
+    if kind == "u32":
+        return P(oead.U32(int(v)))
+    if kind == "vec3":
+        x = oead.Vector3f()
+        x.x, x.y, x.z = float(v["x"]), float(v["y"]), float(v["z"])
+        return P(x)
+    if kind == "param":           # already a serde Parameter
+        from korok_ukmm_native import param_from_cbor
+        return param_from_cbor(v)
+    raise ValueError(kind)
+
+
+def _from_param(kind, p):
+    if kind in ("s64", "s32", "s256", "str"):
+        if not is_str_param(p):
+            raise ValueError("expected a string parameter")
+        return str(p.v)
+    if kind == "bool":
+        return bool(p.v)
+    if kind == "f32":
+        return float(p.v)
+    if kind in ("i32", "u32"):
+        return int(p.v)
+    if kind == "vec3":
+        return {"x": p.v.x, "y": p.v.y, "z": p.v.z}
+    if kind == "param":
+        from korok_ukmm_native import param_to_cbor
+        return param_to_cbor(p)
+    raise ValueError(kind)
+
+
+def paramdata_from(o, fields):
+    """fields: [(serde field, AAMP name, kind, optional)]"""
+    out = {}
+    for field, name, kind, optional in fields:
+        p = o.params.get(A.Name(name))
+        if p is None:
+            if not optional:
+                raise ValueError(f"missing {name}")
+            out[field] = None
+        else:
+            out[field] = _from_param(kind, p)
+    return out
+
+
+def paramdata_to(d, fields):
+    o = A.ParameterObject()
+    for field, name, kind, optional in fields:
+        v = d.get(field)
+        if v is None and optional:
+            continue
+        o.params[A.Name(name)] = _to_param(kind, v)
+    return o
+
+
+# ------------------------------------------------------------- ASList (.baslist)
+ADDRES = [("anim", "Anim", "s64", False), ("retarget_model", "RetargetModel", "s64", True),
+          ("retarget_nocorrect", "RetargetNoCorrect", "bool", True)]
+
+
+def aslist_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    add = {}
+    for _, o in need(lst(pio, "AddReses"), "AS list missing add reses").objects.items():
+        r = paramdata_from(o, ADDRES)
+        add[r["anim"]] = [r, False]
+    defs = {}
+    for _, o in need(lst(pio, "ASDefines"), "AS list missing AS defines").objects.items():
+        defs[need(pstr(o, "Name"), "AS define name")] = [need(pstr(o, "Filename"), "AS define filename"), False]
+    cf = None
+    cfl = lst(pio, "CFDefines")
+    if cfl is not None:
+        cf = {}
+        for _, l in cfl.lists.items():
+            cf[need(pstr(obj(l, "CFPre"), "Name"), "CFPre name")] = [plist_to_cbor(l), False]
+    c = obj(pio, "Common")
+    return {"common": pobj_to_cbor(c) if c is not None else None, "add_reses": add,
+            "as_defines": defs, "cf_defines": cf}
+
+
+def aslist_merge(b, d):
+    return {"common": d.get("common") if d.get("common") is not None else b.get("common"),
+            "add_reses": dmap_merge(b["add_reses"], d["add_reses"]),
+            "as_defines": dmap_merge(b["as_defines"], d["as_defines"]),
+            "cf_defines": (dmap_merge(b["cf_defines"], d["cf_defines"]) if b.get("cf_defines") is not None
+                           else d["cf_defines"]) if d.get("cf_defines") is not None else b.get("cf_defines")}
+
+
+def aslist_to(m):
+    pio = new_pio()
+    if m.get("common") is not None:
+        set_obj(pio, "Common", m["common"])
+    add = A.ParameterList()
+    for i, r in enumerate(v[0] for v in m["add_reses"].values() if not v[1]):
+        add_obj(add, f"AddRes_{i}", paramdata_to(r, ADDRES))
+    add_list(pio, "AddReses", add)
+    defs = A.ParameterList()
+    for i, (n, f) in enumerate((k, v[0]) for k, v in m["as_defines"].items() if not v[1]):
+        o = A.ParameterObject()
+        o.params["Name"] = P(oead.FixedSafeString64(n))
+        o.params["Filename"] = P(oead.FixedSafeString64(f))
+        add_obj(defs, f"ASDefine_{i}", o)
+    add_list(pio, "ASDefines", defs)
+    if m.get("cf_defines") is not None:
+        cf = A.ParameterList()
+        for i, l in enumerate(v[0] for v in m["cf_defines"].values() if not v[1]):
+            add_list(cf, f"CFDefine_{i}", plist_from_cbor(l))
+        add_list(pio, "CFDefines", cf)
+    return bytes(pio.to_binary())
+
+
+typed("ASList", aslist_from, aslist_merge, aslist_to)
+
+
+# ------------------------------------------------------------- Chemical (.bchemical)
+CHEM_UNKNOWN = 3635073347
+
+
+def chemical_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    root = need(lst(pio, "chemical_root"), "Chemical missing chemical_root")
+    hdr = need(obj(root, "chemical_header"), "Chemical missing chemical_header")
+    n = need(_pint(hdr, "res_shape_num"), "Chemical missing shape count")
+    body = need(lst(root, "chemical_body"), "Chemical missing chemical_body")
+    unk = hdr.params.get(A.Name(CHEM_UNKNOWN))
+    return {"unknown": int(unk.v) if unk is not None else None,
+            "body": {i: {"rigid_c": pobj_to_cbor(need(obj(body, f"rigid_c_{i:02d}"), "rigid_c")),
+                         "shape": pobj_to_cbor(need(obj(body, f"shape_{i:02d}"), "shape"))}
+                     for i in range(n)}}
+
+
+def chemical_merge(b, d):
+    return {"unknown": d["unknown"] if d.get("unknown") is not None else b.get("unknown"),
+            "body": index_merge(ilist(b["body"]), d["body"])}
+
+
+def chemical_to(m):
+    pio = new_pio()
+    root = A.ParameterList()
+    hdr = A.ParameterObject()
+    body = ilist(m["body"])
+    hdr.params["res_shape_num"] = P(oead.U32(len(body)))
+    if m.get("unknown") is not None:
+        hdr.params[A.Name(CHEM_UNKNOWN)] = P(oead.U32(int(m["unknown"])))
+    add_obj(root, "chemical_header", hdr)
+    bl = A.ParameterList()
+    for i, b in body.items():
+        set_obj(bl, f"shape_{i:02d}", b["shape"])
+        set_obj(bl, f"rigid_c_{i:02d}", b["rigid_c"])
+    add_list(root, "chemical_body", bl)
+    add_list(pio, "chemical_root", root)
+    return bytes(pio.to_binary())
+
+
+typed("Chemical", chemical_from, chemical_merge, chemical_to)
+
+
+# ------------------------------------------------------------- AttClient (.batcl)
+def attclient_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    return {"client_params": pobj_to_cbor(need(obj(pio, "AttClientParams"), "Attention client missing params")),
+            "checks": [[plist_to_cbor(l), False] for _, l in pio.lists.items()]}
+
+
+def attclient_merge(b, d):
+    return {"client_params": merge_pobj_cbor(b["client_params"], d["client_params"]),
+            "checks": dvec_merge(b["checks"], d["checks"])}
+
+
+def attclient_to(m):
+    pio = new_pio()
+    set_obj(pio, "AttClientParams", m["client_params"])
+    for i, l in enumerate(x for x, dl in m["checks"] if not dl):
+        add_list(pio, f"Check_{i}", plist_from_cbor(l))
+    return bytes(pio.to_binary())
+
+
+typed("AttClient", attclient_from, attclient_merge, attclient_to)
+
+
+# ------------------------------------------------------------- AttClientList (.batcllist)
+def attclientlist_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    cl = {}
+    for _, o in need(lst(pio, "AttClients"), "missing AttClients").objects.items():
+        cl[need(pstr(o, "Name"), "client name")] = [need(pstr(o, "FileName"), "client filename"), False]
+    return {"att_pos": pobj_to_cbor(need(obj(pio, "AttPos"), "missing AttPos")), "att_clients": cl}
+
+
+def attclientlist_merge(b, d):
+    return {"att_pos": merge_pobj_cbor(b["att_pos"], d["att_pos"]),
+            "att_clients": dmap_merge(b["att_clients"], d["att_clients"])}
+
+
+def attclientlist_to(m):
+    pio = new_pio()
+    set_obj(pio, "AttPos", m["att_pos"])
+    cl = A.ParameterList()
+    for i, (n, f) in enumerate((k, v[0]) for k, v in m["att_clients"].items() if not v[1]):
+        o = A.ParameterObject()
+        o.params["Name"] = P(oead.FixedSafeString64(n))
+        o.params["FileName"] = P(oead.FixedSafeString64(f))
+        add_obj(cl, f"AttClient_{i}", o)
+    add_list(pio, "AttClients", cl)
+    return bytes(pio.to_binary())
+
+
+typed("AttClientList", attclientlist_from, attclientlist_merge, attclientlist_to)
+
+
+# ------------------------------------------------------------- RagdollConfig (.brgconfig)
+def rgconfig_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    root = need(lst(pio, "ConfigRoot"), "Ragdoll config missing config root list")
+    return {"attack_type_impulse_data": pobj_to_cbor(need(obj(root, "AttackTypeImpulseData"), "no impulse data")),
+            "impact_impulse_info": {i: plist_to_cbor(l) for i, (_, l) in enumerate(root.lists.items())}}
+
+
+def rgconfig_merge(b, d):
+    return {"attack_type_impulse_data": merge_pobj_cbor(b["attack_type_impulse_data"], d["attack_type_impulse_data"]),
+            "impact_impulse_info": index_merge(ilist(b["impact_impulse_info"]), d["impact_impulse_info"])}
+
+
+def rgconfig_to(m):
+    pio = new_pio()
+    root = A.ParameterList()
+    set_obj(root, "AttackTypeImpulseData", m["attack_type_impulse_data"])
+    for i, l in ilist(m["impact_impulse_info"]).items():
+        add_list(root, f"ImpactImpulseInfo{i + 1:02d}", plist_from_cbor(l))
+    add_list(pio, "ConfigRoot", root)
+    return bytes(pio.to_binary())
+
+
+typed("RagdollConfig", rgconfig_from, rgconfig_merge, rgconfig_to)
+
+
+# ------------------------------------------------------------- RagdollConfigList (.brgconfiglist)
+BODYPARAM = [("name", "RigidName", "s64", False), ("friction_scale", "FrictionScale", "f32", False),
+             ("buoyancy_scale", "BuoyancyScale", "f32", False)]
+
+
+def rgconfiglist_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    bodies = {}
+    for _, o in need(lst(pio, "BodyParamList"), "missing body param list").objects.items():
+        bodies[need(pstr(o, "RigidName"), "body param name")] = [paramdata_from(o, BODYPARAM), False]
+    return {"common_data": pobj_to_cbor(need(obj(pio, "CommonData"), "missing common data")),
+            "impulse_params": plist_to_cbor(need(lst(pio, "ImpulseParamList"), "missing impulse params")),
+            "body_param_list": bodies}
+
+
+def rgconfiglist_merge(b, d):
+    return {"common_data": merge_pobj_cbor(b["common_data"], d["common_data"]),
+            "impulse_params": merge_plist_cbor(b["impulse_params"], d["impulse_params"]),
+            "body_param_list": dmap_merge(b["body_param_list"], d["body_param_list"])}
+
+
+def rgconfiglist_to(m):
+    pio = new_pio()
+    set_obj(pio, "CommonData", m["common_data"])
+    add_list(pio, "ImpulseParamList", plist_from_cbor(m["impulse_params"]))
+    bl = A.ParameterList()
+    for i, bp in enumerate(v[0] for v in m["body_param_list"].values() if not v[1]):
+        add_obj(bl, f"BodyParam_{i}", paramdata_to(bp, BODYPARAM))
+    add_list(pio, "BodyParamList", bl)
+    return bytes(pio.to_binary())
+
+
+typed("RagdollConfigList", rgconfiglist_from, rgconfiglist_merge, rgconfiglist_to)
+
+
+# ------------------------------------------------------------- RagdollBlendWeight (.brgbw)
+RGBW_KEY = [("state_key", "StateKey", "s32", False), ("system_key", "SystemKey", "s32", False)]
+
+
+def _rgbw_key(k):
+    return (str(k["state_key"]), str(k["system_key"]))
+
+
+def rgbw_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    out = {}
+    for _, l in pio.lists.items():
+        key = paramdata_from(need(obj(l, "Setting"), "blend weight state missing header"), RGBW_KEY)
+        weights = {}
+        for _, o in need(lst(l, "InputWeightList"), "missing input weight list").objects.items():
+            weights[need(pstr(o, "RigidName"), "rigid name")] = [float(o.params[A.Name("BlendRate")].v), False]
+        out[_rgbw_key(key)] = weights
+    return out
+
+
+def _rgbw_norm(m):
+    return {(_rgbw_key(k) if not isinstance(k, tuple) else k): v for k, v in m.items()}
+
+
+def rgbw_merge(b, d):
+    # UKMM iterates a HashSet here, so its state order is arbitrary; keep the base order
+    b, d = _rgbw_norm(b), _rgbw_norm(d)
+    out = {}
+    for k in list(dict.fromkeys(list(b) + list(d))):
+        out[k] = dmap_merge(b[k], d[k]) if k in b and k in d else (d.get(k) if k in d else b[k])
+    return out
+
+
+def rgbw_to(m):
+    pio = new_pio()
+    for i, (key, state) in enumerate(_rgbw_norm(m).items(), 1):
+        pl = A.ParameterList()
+        add_obj(pl, "Setting", paramdata_to({"state_key": key[0], "system_key": key[1]}, RGBW_KEY))
+        wl = A.ParameterList()
+        for j, (name, rate) in enumerate(((k, v[0]) for k, v in state.items() if not v[1]), 1):
+            o = A.ParameterObject()
+            o.params["RigidName"] = P(oead.FixedSafeString32(name))
+            o.params["BlendRate"] = P(oead.F32(float(rate)))
+            add_obj(wl, f"InputWeight_{j}", o)
+        add_list(pl, "InputWeightList", wl)
+        add_list(pio, f"State_{i}", pl)
+    return bytes(pio.to_binary())
+
+
+typed("RagdollBlendWeight", rgbw_from, rgbw_merge, rgbw_to)
+
+
+# ------------------------------------------------------------- BoneControl (.bbonectrl)
+def bonectrl_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    groups = {}
+    for _, l in need(lst(pio, "BoneGroups"), "Bone control missing BoneGroups").lists.items():
+        name = need(pstr(obj(l, "Param"), "GroupName"), "bone group name")
+        bones = need(obj(l, "Bones"), "bone list")
+        groups[name] = {str(p.v): False for _, p in bones.params.items() if is_str_param(p)}
+    return {"objects": {k: v for k, v in plist_to_cbor(pio)["objects"].items()}, "bone_groups": groups}
+
+
+def bonectrl_merge(b, d):
+    objs = merge_plist_cbor({"objects": b["objects"]}, {"objects": d["objects"]})["objects"]
+    groups = {}
+    # UKMM iterates a HashSet here (arbitrary order); keep the base order
+    for g in list(dict.fromkeys(list(b["bone_groups"]) + list(d["bone_groups"]))):
+        if g in d["bone_groups"]:
+            groups[g] = (dset_merge(b["bone_groups"][g], d["bone_groups"][g]) if g in b["bone_groups"]
+                         else d["bone_groups"][g])
+        else:
+            groups[g] = b["bone_groups"][g]
+    return {"objects": objs, "bone_groups": groups}
+
+
+def bonectrl_to(m):
+    pio = new_pio()
+    for k, o in m["objects"].items():
+        set_obj(pio, k, o)
+    bg = A.ParameterList()
+    for i, (g, bones) in enumerate(m["bone_groups"].items()):
+        pl = A.ParameterList()
+        po = A.ParameterObject()
+        po.params["GroupName"] = P(oead.FixedSafeString64(g))
+        add_obj(pl, "Param", po)
+        bo = A.ParameterObject()
+        for j, bone in enumerate(k for k, dl in bones.items() if not dl):
+            bo.params[f"Bone_{j}"] = P(oead.FixedSafeString64(bone))
+        add_obj(pl, "Bones", bo)
+        add_list(bg, f"BoneGroup_{i}", pl)
+    add_list(pio, "BoneGroups", bg)
+    return bytes(pio.to_binary())
+
+
+typed("BoneControl", bonectrl_from, bonectrl_merge, bonectrl_to)
+
+
+# ------------------------------------------------------------- LifeCondition (.blifecondition)
+_LIFE_SETS = [("invalid_weathers", "InvalidWeathers"), ("invalid_times", "InvalidTimes"),
+              ("delete_weathers", "DeleteWeathers"), ("delete_times", "DeleteTimes")]
+_LIFE_ITEMS = [("display_dist", "DisplayDistance", "f32"),
+               ("auto_disp_dist_algo", "AutoDisplayDistanceAlgorithm", "str"),
+               ("y_limit_algo", "YLimitAlgorithm", "str")]
+
+
+def life_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    out = {}
+    for field, name in _LIFE_SETS:
+        o = obj(pio, name)
+        out[field] = None if o is None else {str(p.v): False for _, p in o.params.items()}
+    for field, name, kind in _LIFE_ITEMS:
+        o = need(obj(pio, name), f"Life condition missing {name}")
+        p = need(o.params.get(A.Name("Item")), f"{name} missing item")
+        out[field] = _from_param(kind, p)
+    return out
+
+
+def life_merge(b, d):
+    out = {}
+    for field, _ in _LIFE_SETS:
+        out[field] = opt_merge(b.get(field), d.get(field), dset_merge)
+    for field, _, _ in _LIFE_ITEMS:
+        out[field] = d.get(field) if d.get(field) is not None else b.get(field)
+    return out
+
+
+def life_to(m):
+    pio = new_pio()
+
+    def items(name, values):
+        o = A.ParameterObject()
+        for i, v in enumerate((k for k, dl in values.items() if not dl), 1):
+            o.params[f"Item{i:03d}"] = P(oead.FixedSafeString64(v))
+        add_obj(pio, name, o)
+    if m.get("invalid_weathers") is not None:
+        items("InvalidWeathers", m["invalid_weathers"])
+    if m.get("invalid_times") is not None:
+        items("InvalidTimes", m["invalid_times"])
+    for field, name, kind in _LIFE_ITEMS:
+        if m.get(field) is not None:
+            o = A.ParameterObject()
+            o.params["Item"] = _to_param(kind, m[field])
+            add_obj(pio, name, o)
+    if m.get("delete_weathers") is not None:
+        items("DeleteWeathers", m["delete_weathers"])
+    if m.get("delete_times") is not None:
+        items("DeleteTimes", m["delete_times"])
+    return bytes(pio.to_binary())
+
+
+typed("LifeCondition", life_from, life_merge, life_to)
+
+
+# ------------------------------------------------------------- ShopData (.bshop)
+_SHOP_FIELDS = [("sort", "ItemSort", "i32"), ("num", "ItemNum", "i32"), ("adjust_price", "ItemAdjustPrice", "i32"),
+                ("look_get_flag", "ItemLookGetFlg", "bool"), ("amount", "ItemAmount", "i32")]
+
+
+def shop_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    header = need(obj(pio, "Header"), "Shop data missing header")
+    out = {}
+    for _, p in header.params.items():
+        if not is_str_param(p):
+            continue
+        tname = str(p.v)
+        t = need(obj(pio, tname), f"Table {tname} in shop data missing")
+        cols = need(_pint(t, "ColumnNum"), "Shop data table missing column count")
+
+        def process(n):
+            items = {}
+            for i in range(1, n + 1):
+                nm = need(pstr(t, f"ItemName{i:03d}"), "Shop table missing item name")
+                item = {}
+                for field, key, kind in _SHOP_FIELDS:
+                    item[field] = _from_param(kind, need(t.params.get(A.Name(f"{key}{i:03d}")), key))
+                item["delete"] = False
+                items[nm] = item
+            return items
+        try:
+            out[tname] = process(cols)
+        except ValueError:
+            out[tname] = process((len(t.params) - 1) // 6)
+    return out
+
+
+def shop_merge(b, d):
+    out = {}
+    for name, table in b.items():
+        if table is not None:
+            dt = d.get(name)
+            if dt is not None:
+                merged = dict(table)
+                merged.update(dt)
+                out[name] = {k: v for k, v in merged.items() if not v.get("delete")}
+            else:
+                # UKMM's ShopData::merge drops a base table the diff doesn't carry, but the
+                # header still lists it; diffs leave out unchanged tables, so keep it instead
+                out[name] = table
+        else:
+            out[name] = d.get(name)
+    for name, table in d.items():
+        if name not in b:
+            out[name] = table
+    return out
+
+
+def shop_to(m):
+    pio = new_pio()
+    hdr = A.ParameterObject()
+    hdr.params["TableNum"] = P(oead.S32(len(m)))
+    for i, name in enumerate(m, 1):
+        hdr.params[f"Table{i:02d}"] = P(oead.FixedSafeString64(name))
+    add_obj(pio, "Header", hdr)
+    for name, table in m.items():
+        if table is None:
+            continue
+        items = [(k, v) for k, v in table.items() if not v.get("delete")]
+        o = A.ParameterObject()
+        o.params["ColumnNum"] = P(oead.S32(len(items)))
+        for i, (it, data) in enumerate(items, 1):
+            o.params[f"ItemSort{i:03d}"] = P(oead.S32(int(data["sort"])))
+            o.params[f"ItemName{i:03d}"] = P(oead.FixedSafeString64(it))
+            o.params[f"ItemNum{i:03d}"] = P(oead.S32(int(data["num"])))
+            o.params[f"ItemAdjustPrice{i:03d}"] = P(oead.S32(int(data["adjust_price"])))
+            o.params[f"ItemLookGetFlg{i:03d}"] = P(bool(data["look_get_flag"]))
+            o.params[f"ItemAmount{i:03d}"] = P(oead.S32(int(data["amount"])))
+        add_obj(pio, name, o)
+    return bytes(pio.to_binary())
+
+
+typed("ShopData", shop_from, shop_merge, shop_to)
