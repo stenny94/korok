@@ -77,6 +77,25 @@ add a mod, enable it, and let Korok build the graphic pack. Start Cemu and make 
 - Korok backs up the save before every switch and every edit (in the `korok_backups` folder).
   The save editor has had limited testing against real saves, so keep a copy of your own too.
 
+## Compatibility
+
+Mods I have tested with Korok. This is a small list, so a mod not being here doesn't mean it won't work.
+
+### Working
+
+| Mod | Author | Notes |
+| --- | --- | --- |
+| [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Works |
+| [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Works |
+| [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Works |
+| Zelda's Ballad | | Works, but Zelda has no hair unless she is wearing a headdress |
+
+### Not working
+
+| Mod | Author | Notes |
+| --- | --- | --- |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save |
+
 ## Troubleshooting
 
 - **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py main.py`.
