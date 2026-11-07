@@ -1,4 +1,7 @@
 # korok
+
+> THIS IS A FULLY VIBE CODED APPLICATION, USE AT OWN RISK, IF SOMETHING DOES NOT WORK, ASK AN AI TO FIX IT
+
 A mod manager, save manager and save editor for **The Legend of Zelda: Breath of the Wild**
 on **Cemu**. Korok imports mods, merges them together, and writes the result into a
 Cemu graphic pack so they work together without conflicts. It also keeps separate save files
