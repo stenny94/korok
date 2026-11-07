@@ -1821,3 +1821,163 @@ def chmres_to(m):
 
 
 typed("ChemicalRes", chmres_from, chmres_merge, chmres_to)
+
+
+# ------------------------------------------------------------- AnimSeq (.bas)
+# ResType enum of uk-content actor/params/as/res_type.rs
+AS_RES_TYPES = {'Invalid': -1, 'AbsTemperatureBlender': 0, 'AbsTemperatureSelector': 1, 'ArmorSelector': 2, 'ArrowSelector': 3, 'AttentionSelector': 4, 'BoneBlender': 5, 'BoneVisibilityAsset': 6, 'BoolSelector': 7, 'ButtonSelector': 8, 'ChargeSelector': 9, 'ClearMatAnmAsset': 10, 'ComboSelector': 11, 'DiffAngleYBlender': 12, 'DiffAngleYSelector': 13, 'DirectionAngleBlender': 14, 'DirectionAngleSelector': 15, 'DistanceBlender': 16, 'DistanceSelector': 17, 'DungeonClearSelector': 18, 'DungeonNumberSelector': 19, 'EmotionSelector': 20, 'EventFlagSelector': 21, 'EyeSelector': 22, 'EyebrowSelector': 23, 'FaceEmotionSelector': 24, 'FootBLLifeSelector': 25, 'FootBRLifeSelector': 26, 'FootFLLifeSelector': 27, 'FootFRLifeSelector': 28, 'ForwardBentBlender': 29, 'ForwardBentSelector': 30, 'GearSelector': 31, 'GenerationSelector': 32, 'GrabTypeSelector': 33, 'GroundNormalBlender': 34, 'GroundNormalSelector': 35, 'GroundNormalSideBlender': 36, 'GroundNormalSideSelector': 37, 'MaskSelector': 38, 'MatVisibilityAsset': 39, 'MouthSelector': 40, 'NoAnmAsset': 41, 'NoLoopStickAngleBlender': 42, 'NoLoopStickAngleSelector': 43, 'NodePosSelector': 44, 'PersonalitySelector': 45, 'PostureSelector': 46, 'PreASSelector': 47, 'PreExclusionRandomSelector': 48, 'RandomSelector': 49, 'RideSelector': 50, 'RightStickAngleBlender': 51, 'RightStickAngleSelector': 52, 'RightStickValueBlender': 53, 'RightStickValueSelector': 54, 'RightStickXBlender': 55, 'RightStickXSelector': 56, 'RightStickYBlender': 57, 'RightStickYSelector': 58, 'SelfHeightSelector': 59, 'SelfWeightSelector': 60, 'SequencePlayContainer': 61, 'ShaderParamAsset': 62, 'ShaderParamColorAsset': 63, 'ShaderParamTexSRTAsset': 64, 'SizeBlender': 65, 'SizeSelector': 66, 'SkeletalAsset': 67, 'SpeedBlender': 68, 'SpeedSelector': 69, 'StickAngleBlender': 70, 'StickAngleSelector': 71, 'StickValueBlender': 72, 'StickValueSelector': 73, 'StickXBlender': 74, 'StickXSelector': 75, 'StickYBlender': 76, 'StickYSelector': 77, 'StressBlender': 78, 'StressSelector': 79, 'SyncPlayContainer': 80, 'TemperatureBlender': 81, 'TemperatureSelector': 82, 'TexturePatternAsset': 83, 'TimeSelector': 84, 'TiredBlender': 85, 'TiredSelector': 86, 'UseItemSelector': 87, 'UserAngle2Blender': 88, 'UserAngle2Selector': 89, 'UserAngleBlender': 90, 'UserAngleSelector': 91, 'UserSpeedBlender': 92, 'UserSpeedSelector': 93, 'VariationSelector': 94, 'WallAngleBlender': 95, 'WallAngleSelector': 96, 'WeaponDetailSelector': 97, 'WeaponSelector': 98, 'WeatherSelector': 99, 'WeightBlender': 100, 'WeightSelector': 101, 'WindVelocityBlender': 102, 'YSpeedBlender': 103, 'YSpeedSelector': 104, 'ZEx00ExposureBlender': 105, 'ZEx00ExposureSelector': 106}
+
+
+def _live(dmap):
+    """(key, value) pairs of a serde DeleteMap that aren't deleted, in order."""
+    return [(k, v[0]) for k, v in (dmap or {}).items() if not v[1]]
+
+
+def _p_f32(v):
+    return P(oead.F32(float(v)))
+
+
+def _p_i32(v):
+    return P(oead.S32(int(v)))
+
+
+def _as_resource(r) -> "A.ParameterList":
+    pl = A.ParameterList()
+    params = A.ParameterObject()
+    t = r.get("type_index")
+    params.params["TypeIndex"] = _p_i32(AS_RES_TYPES[t] if isinstance(t, str) else int(t))
+    add_obj(pl, "Parameters", params)
+    if r.get("extensions") is not None:
+        ext = A.ParameterList()
+        for _, e in _live(r["extensions"]):
+            (kind, v), = e.items()
+            add_list(ext, kind, _as_extension(kind, v))
+        add_list(pl, "Extend", ext)
+    return pl
+
+
+def _params(pl):
+    return pl.objects[A.Name("Parameters")]
+
+
+def _as_children(r) -> "A.ParameterList":
+    pl = _as_resource(r["base"])
+    ch = A.ParameterObject()
+    for i, c in _live(r.get("children")):
+        ch.params[f"Child{int(i)}"] = _p_i32(c)
+    add_obj(pl, "Children", ch)
+    return pl
+
+
+def _as_asset(r) -> "A.ParameterList":
+    pl = _as_resource(r["base"])
+    _params(pl).params["FileName"] = P(oead.FixedSafeString64(r["file_name"]))
+    return pl
+
+
+def _as_element(e) -> "A.ParameterList":
+    (kind, r), = e.items()
+    if kind == "Resource":
+        return _as_resource(r)
+    if kind == "ResourceWithChildren":
+        return _as_children(r)
+    if kind == "SequencePlayContainer":
+        pl = _as_children(r["base"])
+        _params(pl).params["SequenceLoop"] = P(bool(r["sequence_loop"]))
+        return pl
+    if kind in ("Selector", "Blender"):
+        pl = _as_children(r["base"])
+        p = _params(pl)
+        if r.get("no_sync") is not None:
+            p.params["NoSync"] = P(bool(r["no_sync"]))
+        if r.get("judge_once") is not None:
+            p.params["JudgeOnce"] = P(bool(r["judge_once"]))
+        if kind == "Blender" and r.get("input_limit") is not None:
+            p.params["InputLimit"] = _p_f32(r["input_limit"])
+        return pl
+    if kind == "AssetEx":
+        return _as_asset(r["base"])
+    if kind == "SkeletalAsset":
+        pl = _as_asset(r["base"])
+        p = _params(pl)
+        for field, name, conv in (("init_anm_driven", "InitAnmDriven", _p_i32), ("morph", "Morph", _p_f32),
+                                  ("reset_morph", "ResetMorph", _p_f32)):
+            if r.get(field) is not None:
+                p.params[name] = conv(r[field])
+        return pl
+    raise UnsupportedResource(f"AnimSeq element {kind}", "")
+
+
+_FRAMECTRL = [("rate", "Rate", _p_f32), ("start_frame", "StartFrame", _p_f32), ("end_frame", "EndFrame", _p_f32),
+              ("loop_stop_count", "LoopStopCount", _p_f32),
+              ("loop_stop_count_random", "LoopStopCountRandom", _p_f32),
+              ("reverse_play", "ReversePlay", lambda v: P(bool(v))),
+              ("use_global_frame", "UseGlobalFrame", lambda v: P(bool(v))),
+              ("connect", "Connect", _p_i32), ("foot_type", "FootType", _p_i32), ("anm_loop", "AnmLoop", _p_i32)]
+
+
+def _as_extension(kind, v) -> "A.ParameterList":
+    pl = A.ParameterList()
+    if kind == "FrameCtrl":
+        o = A.ParameterObject()
+        for field, name, conv in _FRAMECTRL:
+            if v.get(field) is not None:
+                o.params[name] = conv(v[field])
+        add_obj(pl, "FrameCtrl0", o)
+    elif kind in ("TriggerEvents", "HoldEvents"):
+        for i, ev in _live(v.get("events")):
+            o = A.ParameterObject()
+            o.params["TypeIndex"] = _p_i32(ev["type_index"])
+            if kind == "TriggerEvents":
+                o.params["Frame"] = _p_f32(ev["frame"])
+            else:
+                o.params["StartFrame"] = _p_f32(ev["start_frame"])
+                o.params["EndFrame"] = _p_f32(ev["end_frame"])
+            o.params["Value"] = P(oead.FixedSafeString32(ev["value"]))
+            add_obj(pl, f"Event{int(i)}", o)
+    elif kind == "StringArray":
+        o = A.ParameterObject()
+        for i, s in _live(v.get("values")):
+            o.params[f"Value{int(i)}"] = P(oead.FixedSafeString64(s))
+        add_obj(pl, "StringArray0", o)
+    elif kind == "Ranges":
+        for i, r in _live(v.get("ranges")):
+            o = A.ParameterObject()
+            o.params["Start"] = _p_f32(r["start"])
+            o.params["End"] = _p_f32(r["end"])
+            add_obj(pl, f"Range{int(i)}", o)
+    elif kind in ("FloatArray", "IntArray"):
+        o = A.ParameterObject()
+        for i, x in _live(v.get("values")):
+            o.params[f"Value{int(i)}"] = _p_f32(x) if kind == "FloatArray" else _p_i32(x)
+        add_obj(pl, f"{kind}0", o)
+    elif kind == "BitIndex":
+        o = A.ParameterObject()
+        o.params["TypeIndex"] = _p_i32(v["type_index"])
+        add_obj(pl, "BitIndex0", o)
+    elif kind == "BlenderBone":
+        o = A.ParameterObject()
+        o.params["Value0"] = P(oead.FixedSafeString32(v["value"]))
+        add_obj(pl, "BlenderBone0", o)
+    else:
+        raise UnsupportedResource(f"AnimSeq extension {kind}", "")
+    return pl
+
+
+def animseq_build(data, vanilla, canon):
+    """AnimSeq::merge is a full replacement: the mod's version is written as it is."""
+    from korok_ukmm_native import param_from_cbor
+    pio = new_pio()
+    if data.get("common_params") is not None:
+        o = A.ParameterObject()
+        for h, p in _live(data["common_params"]):
+            o.params[A.Name(int(h))] = param_from_cbor(p)
+        add_obj(pio, "CommonParams", o)
+    el = A.ParameterList()
+    for i, e in sorted(((int(k), v) for k, v in _live(data.get("elements"))), key=lambda kv: kv[0]):
+        add_list(el, f"Element{i}", _as_element(e))
+    add_list(pio, "Elements", el)
+    return bytes(pio.to_binary())
+
+
+BUILDERS["AnimSeq"] = animseq_build
