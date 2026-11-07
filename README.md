@@ -61,6 +61,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 
 ## Running
 
+> It is highly advised to backup your save data before running this program.
+> To do that, right click on BotW in Cemu, open "Save directory", and copy those folders elsewhere.
+
 From the Korok folder:
 
 ```
