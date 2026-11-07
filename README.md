@@ -16,10 +16,13 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 ## Features
 
 - Import mods from `.zip`, `.7z`, `.bnp` or a plain folder
-- Import UKMM mod packages: Korok runs your UKMM install in the background to convert them
-  (UKMM must be set up once for Wii U; your own UKMM mods and settings are left alone).
-  UKMM mods with install options still need to be installed and deployed in UKMM itself,
-  then imported with **Import Folder...**
+- Import UKMM mod packages without UKMM: Korok reads UKMM's package format itself and rebuilds
+  the game files from your Cemu game files (ported from UKMM, checked against UKMM's own output).
+  Not ported yet: MainField static/location markers, lazy traverse lists, cooking data, level
+  sensor, status effects, tips, shop game data info, sound bars lists, fonts, layouts, animation
+  sequences (.bas), and install options. If a mod uses one of those, Korok converts it with your
+  UKMM install instead when it can find one (UKMM must be set up once for Wii U), or imports the
+  mod disabled and tells you which parts are missing.
 - Archives with several option folders (hair styles, colours, ...) are imported as one main
   mod plus a disabled mod per option, so you can pick the ones you want
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
@@ -103,7 +106,7 @@ Mods I have tested with Korok. This is a small list, so a mod not being here doe
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version can now be imported through UKMM (needs retesting) |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version is now read by Korok itself (needs retesting) |
 
 ## Troubleshooting
 

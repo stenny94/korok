@@ -1785,3 +1785,34 @@ def static_build(data, vanilla, canon):
 
 
 BUILDERS["Static"] = static_build
+
+
+# ------------------------------------------------------------- ChemicalRes (Chemical/system.bchmres)
+_CHMRES = ("world", "material", "element")
+
+
+def chmres_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    out = {}
+    for key in _CHMRES:
+        l = need(lst(pio, key), f"Chemical res missing {key}")
+        out[key] = {need(pstr(o, "label"), "Chemical res entry missing label"): [pobj_to_cbor(o), False]
+                    for _, o in l.objects.items()}
+    return out
+
+
+def chmres_merge(b, d):
+    return {k: dmap_merge(b[k], d.get(k) or {}) for k in _CHMRES}
+
+
+def chmres_to(m):
+    pio = new_pio()
+    for key in _CHMRES:
+        l = A.ParameterList()
+        for i, o in enumerate(v[0] for v in m[key].values() if not v[1]):
+            set_obj(l, str(i), o)
+        add_list(pio, key, l)
+    return bytes(pio.to_binary())
+
+
+typed("ChemicalRes", chmres_from, chmres_merge, chmres_to)
