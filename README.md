@@ -17,12 +17,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 
 - Import mods from `.zip`, `.7z`, `.bnp` or a plain folder
 - Import UKMM mod packages without UKMM: Korok reads UKMM's package format itself and rebuilds
-  the game files from your Cemu game files (ported from UKMM, checked against UKMM's own output).
-  Not ported yet: MainField static/location markers, lazy traverse lists, cooking data, level
-  sensor, status effects, tips, shop game data info, sound bars lists, fonts, layouts, animation
-  sequences (.bas). Mods with install options show a window to pick them. If a mod uses one of those formats, Korok converts it with your
-  UKMM install instead when it can find one (UKMM must be set up once for Wii U), or imports the
-  mod disabled and tells you which parts are missing.
+  the game files from your Cemu game files. This is a port of UKMM's own code (all of its file
+  types), checked file by file against UKMM's output. Mods with install options show a window to
+  pick them. Needs `cbor2` and `zstandard` (in requirements.txt).
 - Archives with several option folders (hair styles, colours, ...) are imported as one main
   mod plus a disabled mod per option, so you can pick the ones you want
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,

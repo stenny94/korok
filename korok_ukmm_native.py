@@ -489,9 +489,19 @@ class Converter:
 
     def build_file(self, file: str, aoc: bool) -> bytes:
         """ModUnpacker::build_file: vanilla, then each version from the mod (base files,
-        then enabled options) applied in order. Returns the uncompressed game file."""
+        then enabled options) applied in order. Returns the uncompressed game file.
+        Results are cached: shared files (e.g. AS files) appear in many actor packs."""
         filepath = f"Aoc/0010/{file}" if aoc and not file.startswith("Aoc/0010/") else file
         canon = canonicalize(filepath)
+        cache = self.__dict__.setdefault("_built", {})
+        if canon in cache:
+            return cache[canon]
+        data = self._build_file(filepath, canon, aoc)
+        if data is not None and len(data) < (8 << 20):
+            cache[canon] = data
+        return data
+
+    def _build_file(self, filepath: str, canon: str, aoc: bool) -> bytes:
         versions = self.pkg.versions(canon)
         vanilla = self.dump.get_bytes(filepath)
         if not versions and vanilla is None:
@@ -506,7 +516,8 @@ class Converter:
                 try:
                     data = self.fmt.build(kind, mdata, data, canon)
                 except UnsupportedResource as e:
-                    self.unsupported[e.kind].append(canon)
+                    if canon not in self.unsupported[e.kind]:
+                        self.unsupported[e.kind].append(canon)
                     if data is None:
                         raise
                     # keep the game working; this change is missing

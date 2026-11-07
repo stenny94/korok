@@ -1821,3 +1821,706 @@ def chmres_to(m):
 
 
 typed("ChemicalRes", chmres_from, chmres_merge, chmres_to)
+
+
+# ------------------------------------------------------------- AnimSeq (.bas)
+# ResType enum of uk-content actor/params/as/res_type.rs
+AS_RES_TYPES = {'Invalid': -1, 'AbsTemperatureBlender': 0, 'AbsTemperatureSelector': 1, 'ArmorSelector': 2, 'ArrowSelector': 3, 'AttentionSelector': 4, 'BoneBlender': 5, 'BoneVisibilityAsset': 6, 'BoolSelector': 7, 'ButtonSelector': 8, 'ChargeSelector': 9, 'ClearMatAnmAsset': 10, 'ComboSelector': 11, 'DiffAngleYBlender': 12, 'DiffAngleYSelector': 13, 'DirectionAngleBlender': 14, 'DirectionAngleSelector': 15, 'DistanceBlender': 16, 'DistanceSelector': 17, 'DungeonClearSelector': 18, 'DungeonNumberSelector': 19, 'EmotionSelector': 20, 'EventFlagSelector': 21, 'EyeSelector': 22, 'EyebrowSelector': 23, 'FaceEmotionSelector': 24, 'FootBLLifeSelector': 25, 'FootBRLifeSelector': 26, 'FootFLLifeSelector': 27, 'FootFRLifeSelector': 28, 'ForwardBentBlender': 29, 'ForwardBentSelector': 30, 'GearSelector': 31, 'GenerationSelector': 32, 'GrabTypeSelector': 33, 'GroundNormalBlender': 34, 'GroundNormalSelector': 35, 'GroundNormalSideBlender': 36, 'GroundNormalSideSelector': 37, 'MaskSelector': 38, 'MatVisibilityAsset': 39, 'MouthSelector': 40, 'NoAnmAsset': 41, 'NoLoopStickAngleBlender': 42, 'NoLoopStickAngleSelector': 43, 'NodePosSelector': 44, 'PersonalitySelector': 45, 'PostureSelector': 46, 'PreASSelector': 47, 'PreExclusionRandomSelector': 48, 'RandomSelector': 49, 'RideSelector': 50, 'RightStickAngleBlender': 51, 'RightStickAngleSelector': 52, 'RightStickValueBlender': 53, 'RightStickValueSelector': 54, 'RightStickXBlender': 55, 'RightStickXSelector': 56, 'RightStickYBlender': 57, 'RightStickYSelector': 58, 'SelfHeightSelector': 59, 'SelfWeightSelector': 60, 'SequencePlayContainer': 61, 'ShaderParamAsset': 62, 'ShaderParamColorAsset': 63, 'ShaderParamTexSRTAsset': 64, 'SizeBlender': 65, 'SizeSelector': 66, 'SkeletalAsset': 67, 'SpeedBlender': 68, 'SpeedSelector': 69, 'StickAngleBlender': 70, 'StickAngleSelector': 71, 'StickValueBlender': 72, 'StickValueSelector': 73, 'StickXBlender': 74, 'StickXSelector': 75, 'StickYBlender': 76, 'StickYSelector': 77, 'StressBlender': 78, 'StressSelector': 79, 'SyncPlayContainer': 80, 'TemperatureBlender': 81, 'TemperatureSelector': 82, 'TexturePatternAsset': 83, 'TimeSelector': 84, 'TiredBlender': 85, 'TiredSelector': 86, 'UseItemSelector': 87, 'UserAngle2Blender': 88, 'UserAngle2Selector': 89, 'UserAngleBlender': 90, 'UserAngleSelector': 91, 'UserSpeedBlender': 92, 'UserSpeedSelector': 93, 'VariationSelector': 94, 'WallAngleBlender': 95, 'WallAngleSelector': 96, 'WeaponDetailSelector': 97, 'WeaponSelector': 98, 'WeatherSelector': 99, 'WeightBlender': 100, 'WeightSelector': 101, 'WindVelocityBlender': 102, 'YSpeedBlender': 103, 'YSpeedSelector': 104, 'ZEx00ExposureBlender': 105, 'ZEx00ExposureSelector': 106}
+
+
+def _live(dmap):
+    """(key, value) pairs of a serde DeleteMap that aren't deleted, in order."""
+    return [(k, v[0]) for k, v in (dmap or {}).items() if not v[1]]
+
+
+def _p_f32(v):
+    return P(oead.F32(float(v)))
+
+
+def _p_i32(v):
+    return P(oead.S32(int(v)))
+
+
+def _as_resource(r) -> "A.ParameterList":
+    pl = A.ParameterList()
+    params = A.ParameterObject()
+    t = r.get("type_index")
+    params.params["TypeIndex"] = _p_i32(AS_RES_TYPES[t] if isinstance(t, str) else int(t))
+    add_obj(pl, "Parameters", params)
+    if r.get("extensions") is not None:
+        ext = A.ParameterList()
+        for _, e in _live(r["extensions"]):
+            (kind, v), = e.items()
+            add_list(ext, kind, _as_extension(kind, v))
+        add_list(pl, "Extend", ext)
+    return pl
+
+
+def _params(pl):
+    return pl.objects[A.Name("Parameters")]
+
+
+def _as_children(r) -> "A.ParameterList":
+    pl = _as_resource(r["base"])
+    ch = A.ParameterObject()
+    for i, c in _live(r.get("children")):
+        ch.params[f"Child{int(i)}"] = _p_i32(c)
+    add_obj(pl, "Children", ch)
+    return pl
+
+
+def _as_asset(r) -> "A.ParameterList":
+    pl = _as_resource(r["base"])
+    _params(pl).params["FileName"] = P(oead.FixedSafeString64(r["file_name"]))
+    return pl
+
+
+def _as_element(e) -> "A.ParameterList":
+    (kind, r), = e.items()
+    if kind == "Resource":
+        return _as_resource(r)
+    if kind == "ResourceWithChildren":
+        return _as_children(r)
+    if kind == "SequencePlayContainer":
+        pl = _as_children(r["base"])
+        _params(pl).params["SequenceLoop"] = P(bool(r["sequence_loop"]))
+        return pl
+    if kind in ("Selector", "Blender"):
+        pl = _as_children(r["base"])
+        p = _params(pl)
+        if r.get("no_sync") is not None:
+            p.params["NoSync"] = P(bool(r["no_sync"]))
+        if r.get("judge_once") is not None:
+            p.params["JudgeOnce"] = P(bool(r["judge_once"]))
+        if kind == "Blender" and r.get("input_limit") is not None:
+            p.params["InputLimit"] = _p_f32(r["input_limit"])
+        return pl
+    if kind == "AssetEx":
+        return _as_asset(r["base"])
+    if kind == "SkeletalAsset":
+        pl = _as_asset(r["base"])
+        p = _params(pl)
+        for field, name, conv in (("init_anm_driven", "InitAnmDriven", _p_i32), ("morph", "Morph", _p_f32),
+                                  ("reset_morph", "ResetMorph", _p_f32)):
+            if r.get(field) is not None:
+                p.params[name] = conv(r[field])
+        return pl
+    raise UnsupportedResource(f"AnimSeq element {kind}", "")
+
+
+_FRAMECTRL = [("rate", "Rate", _p_f32), ("start_frame", "StartFrame", _p_f32), ("end_frame", "EndFrame", _p_f32),
+              ("loop_stop_count", "LoopStopCount", _p_f32),
+              ("loop_stop_count_random", "LoopStopCountRandom", _p_f32),
+              ("reverse_play", "ReversePlay", lambda v: P(bool(v))),
+              ("use_global_frame", "UseGlobalFrame", lambda v: P(bool(v))),
+              ("connect", "Connect", _p_i32), ("foot_type", "FootType", _p_i32), ("anm_loop", "AnmLoop", _p_i32)]
+
+
+def _as_extension(kind, v) -> "A.ParameterList":
+    pl = A.ParameterList()
+    if kind == "FrameCtrl":
+        o = A.ParameterObject()
+        for field, name, conv in _FRAMECTRL:
+            if v.get(field) is not None:
+                o.params[name] = conv(v[field])
+        add_obj(pl, "FrameCtrl0", o)
+    elif kind in ("TriggerEvents", "HoldEvents"):
+        for i, ev in _live(v.get("events")):
+            o = A.ParameterObject()
+            o.params["TypeIndex"] = _p_i32(ev["type_index"])
+            if kind == "TriggerEvents":
+                o.params["Frame"] = _p_f32(ev["frame"])
+            else:
+                o.params["StartFrame"] = _p_f32(ev["start_frame"])
+                o.params["EndFrame"] = _p_f32(ev["end_frame"])
+            o.params["Value"] = P(oead.FixedSafeString32(ev["value"]))
+            add_obj(pl, f"Event{int(i)}", o)
+    elif kind == "StringArray":
+        o = A.ParameterObject()
+        for i, s in _live(v.get("values")):
+            o.params[f"Value{int(i)}"] = P(oead.FixedSafeString64(s))
+        add_obj(pl, "StringArray0", o)
+    elif kind == "Ranges":
+        for i, r in _live(v.get("ranges")):
+            o = A.ParameterObject()
+            o.params["Start"] = _p_f32(r["start"])
+            o.params["End"] = _p_f32(r["end"])
+            add_obj(pl, f"Range{int(i)}", o)
+    elif kind in ("FloatArray", "IntArray"):
+        o = A.ParameterObject()
+        for i, x in _live(v.get("values")):
+            o.params[f"Value{int(i)}"] = _p_f32(x) if kind == "FloatArray" else _p_i32(x)
+        add_obj(pl, f"{kind}0", o)
+    elif kind == "BitIndex":
+        o = A.ParameterObject()
+        o.params["TypeIndex"] = _p_i32(v["type_index"])
+        add_obj(pl, "BitIndex0", o)
+    elif kind == "BlenderBone":
+        o = A.ParameterObject()
+        o.params["Value0"] = P(oead.FixedSafeString32(v["value"]))
+        add_obj(pl, "BlenderBone0", o)
+    else:
+        raise UnsupportedResource(f"AnimSeq extension {kind}", "")
+    return pl
+
+
+def animseq_build(data, vanilla, canon):
+    """AnimSeq::merge is a full replacement: the mod's version is written as it is."""
+    from korok_ukmm_native import param_from_cbor
+    pio = new_pio()
+    if data.get("common_params") is not None:
+        o = A.ParameterObject()
+        for h, p in _live(data["common_params"]):
+            o.params[A.Name(int(h))] = param_from_cbor(p)
+        add_obj(pio, "CommonParams", o)
+    el = A.ParameterList()
+    for i, e in sorted(((int(k), v) for k, v in _live(data.get("elements"))), key=lambda kv: kv[0]):
+        add_list(el, f"Element{i}", _as_element(e))
+    add_list(pio, "Elements", el)
+    return bytes(pio.to_binary())
+
+
+BUILDERS["AnimSeq"] = animseq_build
+
+
+# ------------------------------------------------------------- Tips (Tips/Tips*.byml)
+TIPDATA = [("condition_entry", "ConditionEntry", "str", False), ("condition_file", "ConditionFile", "str", False),
+           ("interval", "Interval", "str", False), ("interval_option", "IntervalOption", "i32", False),
+           ("message_id", "MessageId", "str", False), ("priority", "Priority", "str", False)]
+
+
+def tips_build(data, vanilla, canon):
+    diff = {str(k): [bymldata_from_cbor(v[0], TIPDATA), bool(v[1])] for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {str(t["MessageId"]): [bymldata_from_byml(t, TIPDATA), False] for t in oead.byml.from_binary(vanilla)}
+        model = dmap_merge(dict(sorted(base.items())), diff, sort=True)
+    return byml_to_binary(oead.byml.Array([v[0] for v in model.values()]))
+
+
+BUILDERS["Tips"] = tips_build
+
+
+# ------------------------------------------------------------- BarslistInfo (Sound/ResourceList/BarslistInfo.byml)
+def barslist_build(data, vanilla, canon):
+    diff = {str(k): [dict(v[0]), bool(v[1])] for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {str(k): [{str(x): False for x in v if isinstance(x, str)}, False]
+                for k, v in oead.byml.from_binary(vanilla).items()}
+        model = deep_merge(dict(sorted(base.items())), diff, dset_merge, sort=True)
+    out = oead.byml.Hash()
+    for k, (files, _) in model.items():
+        out[k] = oead.byml.Array([f for f, dl in files.items() if not dl])
+    return byml_to_binary(out)
+
+
+BUILDERS["BarslistInfo"] = barslist_build
+
+
+# ------------------------------------------------------------- LayoutArchive (Layout/*.blarc)
+def layout_build(data, vanilla, canon):
+    files = {}
+    if vanilla is not None:
+        for f in oead.Sarc(vanilla).get_files():
+            files[f.name] = bytes(f.data)
+    for name, blob in data.items():                # the mod's files replace/extend the base's
+        files[str(name)] = bytes(blob)
+    w = oead.SarcWriter(endian=oead.Endianness.Big, mode=oead.SarcWriter.Mode.Legacy)
+    w.set_min_alignment(4)
+    for name, blob in files.items():
+        w.files[name] = blob
+    return bytes(w.write()[1])
+
+
+BUILDERS["LayoutArchive"] = layout_build
+
+
+# ------------------------------------------------------------- LevelSensor (Ecosystem/LevelSensor.sbyml)
+def _f(v):
+    return float(v.v) if hasattr(v, "v") else float(v)
+
+
+def _series_norm(d):
+    return {str(k): [(float(v[0][0]), int(v[0][1])), bool(v[1])] for k, v in (d or {}).items()}
+
+
+def _wseries_norm(d):
+    return {"actors": {(str(k[0]), int(k[1])): [float(v[0]), bool(v[1])] for k, v in (d.get("actors") or {}).items()},
+            "not_rank_up": bool(d.get("not_rank_up"))}
+
+
+def levelsensor_from(data):
+    root = oead.byml.from_binary(data)
+    enemy = {}
+    for e in need(root.get("enemy"), "Level sensor missing enemy section"):
+        enemy[str(e["species"])] = [{str(a["name"]): [(_f(a["value"]), i), False]
+                                     for i, a in enumerate(e["actors"])}, False]
+    flag = {str(x["name"]): [(_f(x["point"]), i), False] for i, x in enumerate(root.get("flag") or [])}
+    setting = {str(k): [(_f(v), i), False]
+               for i, (k, v) in enumerate(need(root.get("setting"), "missing setting").items())}
+    weapon = {}
+    for w in need(root.get("weapon"), "Level sensor missing weapon section"):
+        series = weapon.setdefault(str(w["series"]), [{}, False])[0]
+        series[str(w["actorType"])] = [{
+            "actors": {(str(a["name"]), int(a["plus"].v if hasattr(a["plus"], "v") else a["plus"])): [_f(a["value"]), False]
+                       for a in w["actors"]},
+            "not_rank_up": bool(w.get("not_rank_up", False))}, False]
+    return {"enemy": enemy, "flag": flag, "setting": setting, "weapon": weapon}
+
+
+def levelsensor_build(data, vanilla, canon):
+    d = {"enemy": {str(k): [_series_norm(v[0]), bool(v[1])] for k, v in (data.get("enemy") or {}).items()},
+         "flag": _series_norm(data.get("flag")), "setting": _series_norm(data.get("setting")),
+         "weapon": {str(k): [{str(t): [_wseries_norm(ws[0]), bool(ws[1])] for t, ws in v[0].items()}, bool(v[1])]
+                    for k, v in (data.get("weapon") or {}).items()}}
+    if vanilla is None:
+        m = {k: ({x: y for x, y in v.items() if not y[1]}) for k, v in d.items()}
+    else:
+        b = levelsensor_from(vanilla)
+        m = {"enemy": deep_merge(b["enemy"], d["enemy"], dmap_merge),
+             "flag": dmap_merge(b["flag"], d["flag"]), "setting": dmap_merge(b["setting"], d["setting"]),
+             "weapon": deep_merge(b["weapon"], d["weapon"], dmap_merge)}
+    by_idx = lambda series: sorted(((k, v[0]) for k, v in series.items() if not v[1]), key=lambda kv: kv[1][1])
+    out = oead.byml.Hash()
+    out["enemy"] = oead.byml.Array([
+        oead.byml.Hash({"actors": oead.byml.Array([oead.byml.Hash({"name": n, "value": oead.F32(val[0])})
+                                                   for n, val in by_idx(actors)]),
+                        "species": sp})
+        for sp, (actors, dl) in m["enemy"].items() if not dl])
+    out["flag"] = oead.byml.Array([oead.byml.Hash({"name": n, "point": oead.F32(v[0])}) for n, v in by_idx(m["flag"])])
+    st = oead.byml.Hash()
+    for n, v in by_idx(m["setting"]):
+        st[n] = oead.F32(v[0])
+    out["setting"] = st
+    wl = oead.byml.Array()
+    for series, (types, dl) in m["weapon"].items():
+        if dl:
+            continue
+        for atype, (ws, wdl) in types.items():
+            if wdl:
+                continue
+            wl.append(oead.byml.Hash({
+                "actorType": atype,
+                "actors": oead.byml.Array([oead.byml.Hash({"name": k[0], "plus": oead.S32(k[1]), "value": oead.F32(v[0])})
+                                           for k, v in ws["actors"].items() if not v[1]]),
+                "not_rank_up": bool(ws["not_rank_up"]), "series": series}))
+    out["weapon"] = wl
+    return byml_to_binary(out)
+
+
+BUILDERS["LevelSensor"] = levelsensor_build
+
+
+# ------------------------------------------------------------- ShopGameDataInfo (GameData/ShopGameDataInfo.sbyml)
+def shopgd_build(data, vanilla, canon):
+    out = oead.byml.Hash()
+    base = oead.byml.from_binary(vanilla) if vanilla is not None else None
+    for field, key in (("area_info", "ShopAreaInfo"), ("sold_out_info", "SoldOutInfo")):
+        diff = _byml_dmap(data.get(field) or {}, _u32)
+        if base is None:
+            model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+        else:
+            sec = need(base.get(key), f"Shop game data info missing {key}")
+            b = {_u32(h): [v, False] for h, v in zip(sec["Hashes"], sec["Values"])}
+            model = dmap_merge(dict(sorted(b.items())), diff, sort=True)
+        out[key] = oead.byml.Hash({"Hashes": oead.byml.Array([_hash_byml(h) for h in model]),
+                                   "Values": oead.byml.Array([v[0] for v in model.values()])})
+    return byml_to_binary(out)
+
+
+BUILDERS["ShopGameDataInfo"] = shopgd_build
+
+
+# ------------------------------------------------------------- CookData (Cooking/CookData.sbyml)
+def _ckey(x) -> str:
+    import json
+    return json.dumps(x, sort_keys=True, default=str)
+
+
+def _dvec_merge_key(base: list, diff: list) -> list:
+    """DeleteVec::merge comparing items by value (dicts/lists)."""
+    deleted = {_ckey(it) for it, d in diff if d}
+    items = [it for it, d in base if not d and _ckey(it) not in deleted]
+    keys = [_ckey(it) for it in items]
+    for idx, it in enumerate(x for x, d in diff if not d):
+        if _ckey(it) not in keys:
+            items.insert(idx, it)
+            keys.insert(idx, _ckey(it))
+    return [[it, False] for it in items]
+
+
+def _ival(v) -> int:
+    return _i32(v.v if hasattr(v, "v") else v)
+
+
+def _dv(items):
+    return [[x, False] for x in items]
+
+
+def _norm_dv(dv, inner=None):
+    """serde DeleteVec from CBOR -> same shape with normalized items."""
+    if dv is None:
+        return None
+    return [[inner(it) if inner else it, bool(d)] for it, d in dv]
+
+
+def _recipe_from(h, single):
+    out = {}
+    if single:
+        out["actors"] = _dv([_ival(i) for i in h["Actors"]]) if "Actors" in h else None
+        out["tags"] = _dv([_ival(i) for i in h["Tags"]]) if "Tags" in h else None
+        out["num"] = _ival(h["Num"])
+    else:
+        out["actors"] = _dv([_dv([_ival(i) for i in a]) for a in h["Actors"]]) if "Actors" in h else None
+        out["tags"] = _dv([_dv([_ival(i) for i in a]) for a in h["Tags"]]) if "Tags" in h else None
+    out["hb"] = _ival(h["HB"]) if "HB" in h else None
+    out["recipe"] = _ival(need(h.get("Recipe"), "Recipe"))
+    return out
+
+
+def _recipe_norm(r, single):
+    out = {"hb": _i32(r["hb"]) if r.get("hb") is not None else None, "recipe": _i32(r["recipe"])}
+    for k in ("actors", "tags"):
+        v = r.get(k)
+        out[k] = None if v is None else (_norm_dv(v, _i32) if single else
+                                         _norm_dv(v, lambda inner: _norm_dv(inner, _i32)))
+    if single:
+        out["num"] = _i32(r["num"])
+    return out
+
+
+def _signed_byml(v):
+    return oead.U32(v & 0xFFFFFFFF) if v < 0 else oead.S32(v)
+
+
+def _recipe_to(r, single):
+    h = oead.byml.Hash()
+    for key, field in (("Actors", "actors"), ("Tags", "tags")):
+        v = r.get(field)
+        if v is None:
+            continue
+        if single:
+            h[key] = oead.byml.Array([_signed_byml(x) for x, d in v if not d])
+        else:
+            h[key] = oead.byml.Array([oead.byml.Array([_signed_byml(x) for x, dd in inner if not dd])
+                                      for inner, d in v if not d])
+    if r.get("hb") is not None:
+        h["HB"] = oead.S32(r["hb"])
+    if single:
+        h["Num"] = oead.S32(r["num"])
+    h["Recipe"] = _signed_byml(r["recipe"])
+    return h
+
+
+_CEI = [("bt", "BT"), ("mr", "MR"), ("ma", "Ma"), ("mi", "Mi"), ("ssa", "SSA"), ("t", "T")]
+_SYS_SCALARS = [("fa", "FA", "str"), ("falr", "FALR", "i32"), ("falrmr", "FALRMR", "f32"), ("fca", "FCA", "str"),
+                ("lrmr", "LRMR", "f32"), ("mea", "MEA", "str"), ("sfalr", "SFALR", "i32"), ("ssaet", "SSAET", "i32")]
+
+
+def _sys_from(h):
+    out = {"cei": _dv([{f: (_f(c[k]) if f == "mr" else _ival(c[k])) for f, k in _CEI} for c in h["CEI"]]),
+           "nmmr": _dv([_f(x) for x in h["NMMR"]]), "nmssr": _dv([_ival(x) for x in h["NMSSR"]])}
+    for f, k, kind in _SYS_SCALARS:
+        out[f] = str(h[k]) if kind == "str" else (_f(h[k]) if kind == "f32" else _ival(h[k]))
+    return out
+
+
+def _sys_norm(s):
+    out = {"cei": _norm_dv(s["cei"], lambda c: {f: (float(c[f]) if f == "mr" else _i32(c[f])) for f, _ in _CEI}),
+           "nmmr": _norm_dv(s["nmmr"], float), "nmssr": _norm_dv(s["nmssr"], _i32)}
+    for f, _, kind in _SYS_SCALARS:
+        out[f] = str(s[f]) if kind == "str" else (float(s[f]) if kind == "f32" else _i32(s[f]))
+    return out
+
+
+def cookdata_build(data, vanilla, canon):
+    d = {"recipes": _norm_dv(data["recipes"], lambda r: _recipe_norm(r, False)),
+         "single_recipes": _norm_dv(data["single_recipes"], lambda r: _recipe_norm(r, True)),
+         "system": _sys_norm(data["system"])}
+    if vanilla is None:
+        m = d
+    else:
+        h = oead.byml.from_binary(vanilla)
+        b = {"recipes": _dv([_recipe_from(r, False) for r in h["Recipes"]]),
+             "single_recipes": _dv([_recipe_from(r, True) for r in h["SingleRecipes"]]),
+             "system": _sys_from(h["System"])}
+        sysm = dict(d["system"])
+        for f in ("cei", "nmmr", "nmssr"):
+            sysm[f] = _dvec_merge_key(b["system"][f], d["system"][f])
+        m = {"recipes": _dvec_merge_key(b["recipes"], d["recipes"]),
+             "single_recipes": _dvec_merge_key(b["single_recipes"], d["single_recipes"]), "system": sysm}
+    s = m["system"]
+    sysh = oead.byml.Hash()
+    sysh["CEI"] = oead.byml.Array([oead.byml.Hash({k: (oead.F32(c[f]) if f == "mr" else
+                                                       (_signed_byml(c[f]) if f == "t" else oead.S32(c[f])))
+                                                   for f, k in _CEI}) for c, dl in s["cei"] if not dl])
+    for f, k, kind in _SYS_SCALARS:
+        sysh[k] = s[f] if kind == "str" else (oead.F32(s[f]) if kind == "f32" else oead.S32(s[f]))
+    sysh["NMMR"] = oead.byml.Array([oead.F32(x) for x, dl in s["nmmr"] if not dl])
+    sysh["NMSSR"] = oead.byml.Array([oead.S32(x) for x, dl in s["nmssr"] if not dl])
+    out = oead.byml.Hash({
+        "Recipes": oead.byml.Array([_recipe_to(r, False) for r, dl in m["recipes"] if not dl]),
+        "SingleRecipes": oead.byml.Array([_recipe_to(r, True) for r, dl in m["single_recipes"] if not dl]),
+        "System": sysh})
+    return byml_to_binary(out)
+
+
+BUILDERS["CookData"] = cookdata_build
+
+
+# ------------------------------------------------------------- MainStatic (Map/MainField/Static.smubin)
+def _to_f32(x: float) -> float:
+    import struct
+    try:
+        return struct.unpack("<f", struct.pack("<f", x))[0]
+    except OverflowError:
+        return float("inf") if x > 0 else float("-inf")
+
+
+def rust_f32(x: float) -> str:
+    """Rust's Display for f32: shortest digits that round-trip, never an exponent."""
+    import struct
+    from decimal import Decimal
+    x = _to_f32(x)
+    if x != x:
+        return "NaN"
+    if x in (float("inf"), float("-inf")):
+        return "inf" if x > 0 else "-inf"
+    for p in range(1, 18):
+        s = f"{x:.{p}g}"
+        if struct.unpack("<f", struct.pack("<f", float(s)))[0] == x:
+            break
+    out = format(Decimal(s), "f")
+    if "." in out:
+        out = out.rstrip("0").rstrip(".")
+    if out in ("-0", "0") and str(x).startswith("-"):
+        return "-0"
+    return out
+
+
+def _f32mul(a: float, b: float) -> float:
+    return _to_f32(a * b)
+
+
+_VEC_ORDER = {"Y": 0, "X": 1, "Z": 2, "W": 3}
+
+
+def _vec_id(vec: dict) -> str:
+    return "".join(rust_f32(_f32mul(v[0], 100000.0)) for _, v in vec.items() if not v[1])
+
+
+# field kinds: vec (DeleteMap<char, f32>), str, enum (string), i32, u32, f32, bool
+MS_TYPES = {
+    "dlc_restart_pos": ("DLCRestartPos", [("scale", "Scale", "vec"), ("translate", "Translate", "vec"),
+                                          ("unique_name", "UniqueName", "str")],
+                        ["unique_name"], lambda e: _vec_id(e["translate"]) + (e.get("unique_name") or "")),
+    "collab_anchor": ("FldObj_DLC_ShootingStarCollaborationAnchor", [
+        ("collabo_shooting_star_direction", "CollaboShootingStarDirection", "i32"),
+        ("collabo_shooting_star_end_hour", "CollaboShootingStarEndHour", "i32"),
+        ("collabo_shooting_star_start_hour", "CollaboShootingStarStartHour", "i32"),
+        ("translate", "Translate", "vec"),
+        ("collabo_ssfallout_flag_name", "collaboSSFalloutFlagName", "str"),
+        ("collabo_ssopen_flag_name", "collaboSSOpenFlagName", "str"),
+        ("collabo_ssquest_flag", "collaboSSQuestFlag", "str")],
+        ["collabo_shooting_star_direction", "collabo_shooting_star_end_hour", "collabo_shooting_star_start_hour",
+         "collabo_ssfallout_flag_name", "collabo_ssopen_flag_name", "collabo_ssquest_flag"],
+        lambda e: _vec_id(e["translate"]) + (e.get("collabo_ssopen_flag_name") or "")),
+    "korok_location": ("KorokLocation", [
+        ("flag", "Flag", "str"), ("hidden_korok_body_color", "HiddenKorokBodyColor", "i32"),
+        ("hidden_korok_left_plant_type", "HiddenKorokLeftPlantType", "i32"),
+        ("hidden_korok_mask_type", "HiddenKorokMaskType", "i32"),
+        ("hidden_korok_right_plant_type", "HiddenKorokRightPlantType", "i32"),
+        ("is_appear_check", "IsAppearCheck", "bool"), ("is_hidden_korok_lift_appear", "IsHiddenKorokLiftAppear", "bool"),
+        ("is_invisible_korok", "IsInvisibleKorok", "bool"),
+        ("korok_event_start_wait_frame", "KorokEventStartWaitFrame", "i32"),
+        ("placement_type", "PlacementType", "enum"), ("rail_move_speed", "RailMoveSpeed", "f32"),
+        ("territory_area", "TerritoryArea", "f32"), ("translate", "Translate", "vec")],
+        ["flag", "hidden_korok_body_color", "hidden_korok_left_plant_type", "hidden_korok_mask_type",
+         "hidden_korok_right_plant_type", "is_appear_check", "is_hidden_korok_lift_appear", "is_invisible_korok",
+         "korok_event_start_wait_frame", "placement_type", "rail_move_speed", "territory_area"],
+        lambda e: _vec_id(e["translate"]) + (e.get("flag") or "")),
+    "location_marker": ("LocationMarker", [
+        ("icon", "Icon", "enum"), ("message_id", "MessageID", "str"), ("priority", "Priority", "i32"),
+        ("save_flag", "SaveFlag", "str"), ("translate", "Translate", "vec"),
+        ("warp_dest_map_name", "WarpDestMapName", "mapunit"), ("warp_dest_pos_name", "WarpDestPosName", "str")],
+        ["priority", "save_flag"], lambda e: _vec_id(e["translate"]) + (e.get("message_id") or "")),
+    "location_pointer": ("LocationPointer", [
+        ("location_priority", "LocationPriority", "i32"), ("message_id", "MessageID", "str"),
+        ("pointer_type", "PointerType", "i32"), ("save_flag", "SaveFlag", "str"), ("show_level", "ShowLevel", "i32"),
+        ("translate", "Translate", "vec")],
+        ["location_priority", "pointer_type", "show_level"],
+        lambda e: _vec_id(e["translate"]) + (e.get("message_id") or "")),
+    "non_auto_gen_area": ("NonAutoGenArea", [
+        ("enable_auto_flower", "EnableAutoFlower", "bool"), ("rotate_y", "RotateY", "f32"),
+        ("scale", "Scale", "vec"), ("shape", "Shape", "enum"), ("translate", "Translate", "vec")],
+        ["enable_auto_flower", "rotate_y", "shape"],
+        lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"]) + rust_f32(e.get("rotate_y") or 0.0)
+        + (e.get("shape") or "Sphere")),
+    "non_auto_placement": ("NonAutoPlacement", [
+        ("non_auto_placement_animal", "NonAutoPlacementAnimal", "bool"),
+        ("non_auto_placement_bird", "NonAutoPlacementBird", "bool"),
+        ("non_auto_placement_enemy", "NonAutoPlacementEnemy", "bool"),
+        ("non_auto_placement_fish", "NonAutoPlacementFish", "bool"),
+        ("non_auto_placement_insect", "NonAutoPlacementInsect", "bool"),
+        ("non_auto_placement_material", "NonAutoPlacementMaterial", "bool"),
+        ("non_enemy_search_player", "NonEnemySearchPlayer", "bool"), ("not_use_for_stats", "NotUseForStats", "bool"),
+        ("rotate_y", "RotateY", "f32"), ("scale", "Scale", "vec"), ("shape", "Shape", "enum"),
+        ("translate", "Translate", "vec")],
+        ["non_auto_placement_animal", "non_auto_placement_bird", "non_auto_placement_enemy",
+         "non_auto_placement_fish", "non_auto_placement_insect", "non_auto_placement_material",
+         "non_enemy_search_player", "rotate_y", "shape"],
+        lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"]) + rust_f32(e.get("rotate_y") or 0.0)
+        + (e.get("shape") or "Sphere")),
+    "road_npc_rest_station": ("RoadNpcRestStation", [
+        ("rest_horse_left", "RestHorseLeft", "bool"), ("rest_only_npc", "RestOnlyNpc", "bool"),
+        ("rest_with_horse", "RestWithHorse", "bool"), ("rotate_y", "RotateY", "f32"),
+        ("translate", "Translate", "vec")],
+        ["rest_horse_left", "rest_only_npc", "rest_with_horse", "rotate_y"], lambda e: _vec_id(e["translate"])),
+    "start_pos": ("StartPos", [
+        ("map", "Map", "mapunit"), ("player_state", "PlayerState", "enum"), ("pos_name", "PosName", "str"),
+        ("rotate", "Rotate", "vec"), ("translate", "Translate", "vec")],
+        ["map"], lambda e: _vec_id(e["translate"]) + (e.get("pos_name") or "")),
+    "static_grudge_location": ("StaticGrudgeLocation", [
+        ("eyeball_hash_id", "EyeballHashId", "u32"), ("translate", "Translate", "vec")],
+        [], lambda e: _vec_id(e["translate"]) + str(e.get("eyeball_hash_id") or 0)),
+    "target_pos_marker": ("TargetPosMarker", [
+        ("rotate", "Rotate", "vec"), ("translate", "Translate", "vec"), ("unique_name", "UniqueName", "str")],
+        ["unique_name"], lambda e: _vec_id(e["translate"]) + (e.get("unique_name") or "")),
+    "tera_water_disable": ("TeraWaterDisable", [("scale", "Scale", "vec"), ("translate", "Translate", "vec")],
+                           [], lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"])),
+    "terrain_hide_center_tag": ("TerrainHideCenterTag", [("scale", "Scale", "vec"), ("translate", "Translate", "vec")],
+                                [], lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"])),
+}
+
+
+def _mapunit_str(v):
+    """MapUnit / MapAndUnit serde -> the game's string ('A-1', 'MainField/A-1', 'CDungeon')."""
+    if isinstance(v, str):
+        return v
+    if "unit" in v:                                   # MapAndUnit {map, unit}
+        return f"{v['map']}/{_mapunit_str(v['unit'])}"
+    col = int(v["col"])
+    return str(v["row"]) if col == 0xFFFFFFFF else f"{v['row']}-{col}"
+
+
+def _ms_entry_from_byml(h, fields):
+    e = {}
+    for field, key, kind in fields:
+        if key not in h:
+            e[field] = {} if kind == "vec" else None
+            continue
+        v = h[key]
+        if kind == "vec":
+            # roead parses BYML hashes into a hash map; for these keys it iterates Y, X, Z, and
+            # UKMM's entry IDs are built in that order
+            items = sorted(((str(k)[0], _f(x)) for k, x in v.items()), key=lambda kv: _VEC_ORDER.get(kv[0], 9))
+            e[field] = {k: [x, False] for k, x in items}
+        elif kind in ("str", "enum", "mapunit"):
+            e[field] = str(v)
+        elif kind == "f32":
+            e[field] = _f(v)
+        elif kind == "bool":
+            e[field] = bool(v)
+        elif kind == "u32":
+            e[field] = _u32(v.v if hasattr(v, "v") else v)
+        else:
+            e[field] = _ival(v)
+    return e
+
+
+def _ms_entry_norm(d, fields):
+    e = {}
+    for field, _, kind in fields:
+        v = d.get(field)
+        if kind == "vec":                              # serde char keys arrive as code points
+            e[field] = {(chr(k) if isinstance(k, int) else str(k)): [float(x[0]), bool(x[1])]
+                        for k, x in (v or {}).items()}
+        elif v is None:
+            e[field] = None
+        elif kind == "mapunit":
+            e[field] = _mapunit_str(v)
+        elif kind == "f32":
+            e[field] = float(v)
+        elif kind in ("i32",):
+            e[field] = _i32(v)
+        elif kind == "u32":
+            e[field] = _u32(v)
+        elif kind == "bool":
+            e[field] = bool(v)
+        else:
+            e[field] = str(v)
+    return e
+
+
+def _ms_entry_merge(b, d, fields):
+    out = {}
+    for field, _, kind in fields:
+        if kind == "vec":
+            out[field] = dmap_merge(b.get(field) or {}, d.get(field) or {})
+        else:
+            out[field] = d.get(field) if d.get(field) is not None else b.get(field)
+    return out
+
+
+def _ms_complete(e, fields, required):
+    if any(e.get(r) is None for r in required):
+        return False
+    return all(all(k in "XYZ" for k, v in e[f].items() if not v[1]) for f, _, kind in fields if kind == "vec")
+
+
+def _ms_entry_to(e, fields):
+    h = oead.byml.Hash()
+    for field, key, kind in fields:
+        v = e.get(field)
+        if kind == "vec":
+            h[key] = oead.byml.Hash({k: oead.F32(x[0]) for k, x in v.items() if not x[1]})
+        elif v is None:
+            continue
+        elif kind == "f32":
+            h[key] = oead.F32(v)
+        elif kind == "i32":
+            h[key] = oead.S32(v)
+        elif kind == "u32":
+            h[key] = oead.U32(v)
+        elif kind == "bool":
+            h[key] = bool(v)
+        else:
+            h[key] = str(v)
+    return h
+
+
+def mainstatic_build(data, vanilla, canon):
+    base = oead.byml.from_binary(vanilla) if vanilla is not None else None
+    out = oead.byml.Hash()
+    for field, (key, fields, required, idf) in MS_TYPES.items():
+        dsec = data.get(field)
+        diff = None if dsec is None else {str(k): [_ms_entry_norm(v[0], fields), bool(v[1])] for k, v in dsec.items()}
+        if base is not None and key in base:
+            bsec = {}
+            for h in base[key]:
+                e = _ms_entry_from_byml(h, fields)
+                bsec[str(H(idf(e)))] = [e, False]
+        elif base is not None and field != "dlc_restart_pos":
+            raise ValueError(f"MainField static missing {key}")
+        else:
+            bsec = None
+        if field == "dlc_restart_pos" and bsec is None and diff is None:
+            continue
+        if bsec is None:
+            model = {k: v for k, v in (diff or {}).items() if not v[1]}
+        elif diff is None:
+            model = bsec
+        else:
+            model = deep_merge(bsec, diff, lambda b, d, f=fields: _ms_entry_merge(b, d, f))
+        out[key] = oead.byml.Array([_ms_entry_to(e, fields) for e, dl in model.values()
+                                    if not dl and _ms_complete(e, fields, required)])
+    return byml_to_binary(out)
+
+
+BUILDERS["MainStatic"] = mainstatic_build
+
+
+BUILDERS["FontArchive"] = layout_build          # same structure and merge as LayoutArchive
