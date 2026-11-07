@@ -587,7 +587,8 @@ class KorokUI(QMainWindow):
             "BotW Mod Files (*.bnp *.zip *.7z);;BNP Files (*.bnp);;Zip Files (*.zip);;7-Zip Files (*.7z)",
         )
         if file_paths:
-            if any(self.engine.is_ukmm_archive(p) for p in file_paths) and not self.ensure_ukmm():
+            if any(self.engine.is_ukmm_archive(p) for p in file_paths) and \
+                    not self.engine.native_ukmm_available() and not self.ensure_ukmm():
                 file_paths = [p for p in file_paths if not self.engine.is_ukmm_archive(p)]
                 if not file_paths:
                     return
@@ -599,10 +600,11 @@ class KorokUI(QMainWindow):
             return True
         QMessageBox.information(
             self, "UKMM needed",
-            "This is a UKMM mod package. Its files are stored in UKMM's own format, so Korok "
-            "runs UKMM in the background to convert it (your own UKMM mods and settings are "
-            "not touched).\n\nUKMM must be set up once for Wii U (game dump folders). "
-            "Point Korok at ukmm.exe next.")
+            "This is a UKMM mod package. Its files are stored in UKMM's own format. Korok can "
+            "read them itself once its extra packages are installed (pip install -r "
+            "requirements.txt); otherwise it runs UKMM in the background to convert it (your own "
+            "UKMM mods and settings are not touched).\n\nUKMM must be set up once for Wii U "
+            "(game dump folders). Point Korok at ukmm.exe next.")
         exe, _ = QFileDialog.getOpenFileName(self, "Locate ukmm.exe", "", "UKMM (ukmm.exe ukmm);;All files (*)")
         if not exe:
             return False
