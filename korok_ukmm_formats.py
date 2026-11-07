@@ -1981,3 +1981,154 @@ def animseq_build(data, vanilla, canon):
 
 
 BUILDERS["AnimSeq"] = animseq_build
+
+
+# ------------------------------------------------------------- Tips (Tips/Tips*.byml)
+TIPDATA = [("condition_entry", "ConditionEntry", "str", False), ("condition_file", "ConditionFile", "str", False),
+           ("interval", "Interval", "str", False), ("interval_option", "IntervalOption", "i32", False),
+           ("message_id", "MessageId", "str", False), ("priority", "Priority", "str", False)]
+
+
+def tips_build(data, vanilla, canon):
+    diff = {str(k): [bymldata_from_cbor(v[0], TIPDATA), bool(v[1])] for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {str(t["MessageId"]): [bymldata_from_byml(t, TIPDATA), False] for t in oead.byml.from_binary(vanilla)}
+        model = dmap_merge(dict(sorted(base.items())), diff, sort=True)
+    return byml_to_binary(oead.byml.Array([v[0] for v in model.values()]))
+
+
+BUILDERS["Tips"] = tips_build
+
+
+# ------------------------------------------------------------- BarslistInfo (Sound/ResourceList/BarslistInfo.byml)
+def barslist_build(data, vanilla, canon):
+    diff = {str(k): [dict(v[0]), bool(v[1])] for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {str(k): [{str(x): False for x in v if isinstance(x, str)}, False]
+                for k, v in oead.byml.from_binary(vanilla).items()}
+        model = deep_merge(dict(sorted(base.items())), diff, dset_merge, sort=True)
+    out = oead.byml.Hash()
+    for k, (files, _) in model.items():
+        out[k] = oead.byml.Array([f for f, dl in files.items() if not dl])
+    return byml_to_binary(out)
+
+
+BUILDERS["BarslistInfo"] = barslist_build
+
+
+# ------------------------------------------------------------- LayoutArchive (Layout/*.blarc)
+def layout_build(data, vanilla, canon):
+    files = {}
+    if vanilla is not None:
+        for f in oead.Sarc(vanilla).get_files():
+            files[f.name] = bytes(f.data)
+    for name, blob in data.items():                # the mod's files replace/extend the base's
+        files[str(name)] = bytes(blob)
+    w = oead.SarcWriter(endian=oead.Endianness.Big, mode=oead.SarcWriter.Mode.Legacy)
+    w.set_min_alignment(4)
+    for name, blob in files.items():
+        w.files[name] = blob
+    return bytes(w.write()[1])
+
+
+BUILDERS["LayoutArchive"] = layout_build
+
+
+# ------------------------------------------------------------- LevelSensor (Ecosystem/LevelSensor.sbyml)
+def _f(v):
+    return float(v.v) if hasattr(v, "v") else float(v)
+
+
+def _series_norm(d):
+    return {str(k): [(float(v[0][0]), int(v[0][1])), bool(v[1])] for k, v in (d or {}).items()}
+
+
+def _wseries_norm(d):
+    return {"actors": {(str(k[0]), int(k[1])): [float(v[0]), bool(v[1])] for k, v in (d.get("actors") or {}).items()},
+            "not_rank_up": bool(d.get("not_rank_up"))}
+
+
+def levelsensor_from(data):
+    root = oead.byml.from_binary(data)
+    enemy = {}
+    for e in need(root.get("enemy"), "Level sensor missing enemy section"):
+        enemy[str(e["species"])] = [{str(a["name"]): [(_f(a["value"]), i), False]
+                                     for i, a in enumerate(e["actors"])}, False]
+    flag = {str(x["name"]): [(_f(x["point"]), i), False] for i, x in enumerate(root.get("flag") or [])}
+    setting = {str(k): [(_f(v), i), False]
+               for i, (k, v) in enumerate(need(root.get("setting"), "missing setting").items())}
+    weapon = {}
+    for w in need(root.get("weapon"), "Level sensor missing weapon section"):
+        series = weapon.setdefault(str(w["series"]), [{}, False])[0]
+        series[str(w["actorType"])] = [{
+            "actors": {(str(a["name"]), int(a["plus"].v if hasattr(a["plus"], "v") else a["plus"])): [_f(a["value"]), False]
+                       for a in w["actors"]},
+            "not_rank_up": bool(w.get("not_rank_up", False))}, False]
+    return {"enemy": enemy, "flag": flag, "setting": setting, "weapon": weapon}
+
+
+def levelsensor_build(data, vanilla, canon):
+    d = {"enemy": {str(k): [_series_norm(v[0]), bool(v[1])] for k, v in (data.get("enemy") or {}).items()},
+         "flag": _series_norm(data.get("flag")), "setting": _series_norm(data.get("setting")),
+         "weapon": {str(k): [{str(t): [_wseries_norm(ws[0]), bool(ws[1])] for t, ws in v[0].items()}, bool(v[1])]
+                    for k, v in (data.get("weapon") or {}).items()}}
+    if vanilla is None:
+        m = {k: ({x: y for x, y in v.items() if not y[1]}) for k, v in d.items()}
+    else:
+        b = levelsensor_from(vanilla)
+        m = {"enemy": deep_merge(b["enemy"], d["enemy"], dmap_merge),
+             "flag": dmap_merge(b["flag"], d["flag"]), "setting": dmap_merge(b["setting"], d["setting"]),
+             "weapon": deep_merge(b["weapon"], d["weapon"], dmap_merge)}
+    by_idx = lambda series: sorted(((k, v[0]) for k, v in series.items() if not v[1]), key=lambda kv: kv[1][1])
+    out = oead.byml.Hash()
+    out["enemy"] = oead.byml.Array([
+        oead.byml.Hash({"actors": oead.byml.Array([oead.byml.Hash({"name": n, "value": oead.F32(val[0])})
+                                                   for n, val in by_idx(actors)]),
+                        "species": sp})
+        for sp, (actors, dl) in m["enemy"].items() if not dl])
+    out["flag"] = oead.byml.Array([oead.byml.Hash({"name": n, "point": oead.F32(v[0])}) for n, v in by_idx(m["flag"])])
+    st = oead.byml.Hash()
+    for n, v in by_idx(m["setting"]):
+        st[n] = oead.F32(v[0])
+    out["setting"] = st
+    wl = oead.byml.Array()
+    for series, (types, dl) in m["weapon"].items():
+        if dl:
+            continue
+        for atype, (ws, wdl) in types.items():
+            if wdl:
+                continue
+            wl.append(oead.byml.Hash({
+                "actorType": atype,
+                "actors": oead.byml.Array([oead.byml.Hash({"name": k[0], "plus": oead.S32(k[1]), "value": oead.F32(v[0])})
+                                           for k, v in ws["actors"].items() if not v[1]]),
+                "not_rank_up": bool(ws["not_rank_up"]), "series": series}))
+    out["weapon"] = wl
+    return byml_to_binary(out)
+
+
+BUILDERS["LevelSensor"] = levelsensor_build
+
+
+# ------------------------------------------------------------- ShopGameDataInfo (GameData/ShopGameDataInfo.sbyml)
+def shopgd_build(data, vanilla, canon):
+    out = oead.byml.Hash()
+    base = oead.byml.from_binary(vanilla) if vanilla is not None else None
+    for field, key in (("area_info", "ShopAreaInfo"), ("sold_out_info", "SoldOutInfo")):
+        diff = _byml_dmap(data.get(field) or {}, _u32)
+        if base is None:
+            model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+        else:
+            sec = need(base.get(key), f"Shop game data info missing {key}")
+            b = {_u32(h): [v, False] for h, v in zip(sec["Hashes"], sec["Values"])}
+            model = dmap_merge(dict(sorted(b.items())), diff, sort=True)
+        out[key] = oead.byml.Hash({"Hashes": oead.byml.Array([_hash_byml(h) for h in model]),
+                                   "Values": oead.byml.Array([v[0] for v in model.values()])})
+    return byml_to_binary(out)
+
+
+BUILDERS["ShopGameDataInfo"] = shopgd_build
