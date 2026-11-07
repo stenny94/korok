@@ -13,6 +13,7 @@ from datetime import datetime
 import korok_rstb
 import korok_merge
 import korok_mergers
+import korok_ukmm
 
 try:
     import winreg
@@ -97,21 +98,39 @@ class KorokEngine:
         self.update_graphic_packs_dir()
 
     # ---------- config ----------
-    def load_config_path(self) -> str:
+    def _read_config(self) -> dict:
         if CONFIG_FILE.exists():
             try:
-                return json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("cemu_dir", "")
+                d = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                return d if isinstance(d, dict) else {}
             except Exception:
                 pass
-        return ""
+        return {}
 
-    def save_config_path(self, cemu_path: str):
+    def _write_config(self, **changes):
+        cfg = self._read_config()
+        cfg.update(changes)
         try:
-            CONFIG_FILE.write_text(
-                json.dumps({"cemu_dir": cemu_path}, indent=4), encoding="utf-8"
-            )
+            CONFIG_FILE.write_text(json.dumps(cfg, indent=4), encoding="utf-8")
         except Exception as e:
             print(f"Failed to save config: {e}")
+
+    def load_config_path(self) -> str:
+        return self._read_config().get("cemu_dir", "")
+
+    def save_config_path(self, cemu_path: str):
+        self._write_config(cemu_dir=cemu_path)
+
+    # UKMM is only used to convert UKMM-format packages (see korok_ukmm.py)
+    def ukmm_exe(self):
+        return korok_ukmm.find_ukmm_exe(self._read_config().get("ukmm_exe", ""))
+
+    def set_ukmm_exe(self, path: str):
+        self._write_config(ukmm_exe=str(path))
+
+    @staticmethod
+    def is_ukmm_archive(path) -> bool:
+        return korok_ukmm.is_ukmm_archive(path)
 
     def resolve_user_dir(self) -> pathlib.Path:
         """Where Cemu 2.x actually reads graphicPacks/ from.
@@ -247,19 +266,35 @@ default = true
         return False
 
     @staticmethod
-    def _find_pack_root(base: pathlib.Path):
-        """Shallowest folder that directly contains 'content' or 'aoc'."""
-        queue = [base]
+    def _find_pack_roots(base: pathlib.Path) -> list:
+        """Every folder that directly contains 'content' or 'aoc', shallowest first.
+        Mods with options (hair styles, colours, ...) often ship one such folder
+        per option."""
+        roots, queue = [], [base]
         while queue:
             cur = queue.pop(0)
-            children = [c for c in cur.iterdir() if c.is_dir()]
+            try:
+                children = sorted((c for c in cur.iterdir() if c.is_dir()), key=lambda c: c.name.lower())
+            except OSError:
+                continue
             if any(c.name.lower() in GAME_DIRS for c in children):
-                return cur
+                roots.append(cur)
+                # don't look inside the game folders themselves
+                children = [c for c in children if c.name.lower() not in GAME_DIRS]
             queue.extend(children)
-        return None
+        return roots
 
-    def import_mod_archive(self, file_path: str, mod_display_name: str) -> list:
-        """Stages a mod. Returns a list of warning strings."""
+    @classmethod
+    def _find_pack_root(cls, base: pathlib.Path):
+        """Shallowest folder that directly contains 'content' or 'aoc'."""
+        roots = cls._find_pack_roots(base)
+        return roots[0] if roots else None
+
+    def import_mod_archive(self, file_path: str, mod_display_name: str,
+                           _option_of: str = "") -> list:
+        """Stages a mod. Returns a list of warning strings.
+        _option_of: internal - set when importing an extra option folder of a mod,
+        so it gets its own name and is imported disabled."""
         archive_path = pathlib.Path(file_path)
         safe_name = self._safe_name(mod_display_name)
         staged_mod_path = self.staging_dir / safe_name
@@ -275,22 +310,32 @@ default = true
                 scan = temp_extract
 
             if self._is_ukmm_package(scan):
-                raise RuntimeError(
-                    "This is a UKMM package (it has meta.yml + manifest.yml). Its files are stored as "
-                    "compressed UKMM diffs, not game files, so Korok can't use them directly.\n"
-                    "Fix: install it in UKMM, deploy it to a folder (UKMM > Settings > Deploy > "
-                    "output folder), then use Korok's 'Import Folder...' on that deployed folder.\n"
-                    "Or download the BNP (BCML) version of the mod if it has one.")
-
-            root = self._find_pack_root(scan)
+                # UKMM stores its own encoded resources, not game files: let UKMM
+                # turn the package into a deployed folder and import that.
+                ukmm_name = korok_ukmm.package_name(archive_path)
+                deployed = korok_ukmm.convert(archive_path, self.ukmm_exe(), log=self._ukmm_log)
+                from_dir = True
+                root = deployed
+                if ukmm_name:
+                    safe_name = self._safe_name(ukmm_name)
+                    staged_mod_path = self.staging_dir / safe_name
+                warnings.append(
+                    f"'{safe_name}' is a UKMM package; it was converted with UKMM. The result is "
+                    "already merged with the game files, so if another mod changes the same files, "
+                    "whichever is lower in the load order wins.")
+                roots = [root]
+            else:
+                roots = self._find_pack_roots(scan)
+                root = roots[0] if roots else None
             if root is None:
                 raise RuntimeError(
                     "No 'content' or 'aoc' folder found in this archive. "
                     "It may be a Switch ('romfs') mod or an unsupported format."
                 )
+            extra_roots = [] if _option_of else roots[1:]
 
             # Prefer the mod's own name (BNP info.json / graphic pack rules.txt)
-            nice = self._embedded_name(root)
+            nice = None if _option_of else self._embedded_name(root)
             if nice:
                 safe_name = self._safe_name(nice)
                 staged_mod_path = self.staging_dir / safe_name
@@ -349,22 +394,46 @@ default = true
 
             self._write_meta(staged_mod_path, {"needs_merge": needs_merge})
             self._known_before = {safe_name} if was_known else set()
-            self._register_mod(safe_name, enable=not needs_merge)
+            if _option_of and was_known:
+                self._register_mod(safe_name, enable=None)   # keep the user's choice
+            else:
+                self._register_mod(safe_name, enable=not needs_merge and not _option_of)
             self._known_before = set()
 
             entries = self._load_rstb_log(logs)
             if entries:
                 (staged_mod_path / RSTB_LOG_NAME).write_text(json.dumps(entries), encoding="utf-8")
-            elif not (staged_mod_path / "content" / "System" / "Resource"
-                      / "ResourceSizeTable.product.srsizetable").exists():
-                warnings.append(
-                    f"'{safe_name}' has no RSTB data (logs/rstb.json). If it contains files "
-                    "larger than the originals, the game may hang while loading."
-                )
+            # No RSTB data at all is handled at build time (_changed_resource_names).
+
+            if extra_roots:
+                main_name = safe_name
+                added = []
+                for extra in extra_roots:
+                    label = extra.name if extra != scan else "base"
+                    opt_name = self._safe_name(f"{main_name} - {label}")
+                    try:
+                        self.import_mod_archive(str(extra), opt_name, _option_of=main_name)
+                        added.append(self.last_imported_name)
+                    except Exception as e:
+                        warnings.append(f"Option folder '{label}' could not be imported: {e}")
+                self.last_imported_name = main_name
+                if added:
+                    warnings.append(
+                        f"This archive has {len(roots)} separate mod folders (usually one per option, "
+                        f"like hair styles or colours). '{main_name}' is the main one and is enabled. "
+                        f"The others were added DISABLED: {', '.join(added)}. Tick the option(s) you "
+                        "want and keep them BELOW the main mod in the load order.")
         finally:
             shutil.rmtree(temp_extract, ignore_errors=True)
 
         return warnings
+
+    @staticmethod
+    def _ukmm_log(text: str):
+        try:
+            (LOGS_DIR / "korok_ukmm.log").write_text(text, encoding="utf-8")
+        except Exception:
+            pass
 
     @staticmethod
     def _write_meta(mod_path: pathlib.Path, info: dict):
@@ -519,7 +588,7 @@ default = true
         prof = self._profile()
         if enable and name not in prof["enabled"] and name not in getattr(self, "_known_before", set()):
             prof["enabled"].append(name)
-        if not enable and name in prof["enabled"]:
+        if enable is False and name in prof["enabled"]:
             prof["enabled"].remove(name)
         self._save_state()
 
@@ -816,7 +885,22 @@ default = true
                     shipped_tables.append((mod_name, korok_rstb.SizeTable.from_file(p)))
                 except Exception:
                     pass
-        if (not entries and not shipped_tables and not getattr(self, "text_langs_edited", [])
+        # Mods with no RSTB data at all (plain graphic packs): find the game files they
+        # change so the vanilla entries, now too small, can be removed.
+        changed_by_mod = {}
+        for mod_name in getattr(self, "_build_mods", self.profile_mods()):
+            mod_dir = self.staging_dir / mod_name
+            has_table = any(mn == mod_name for mn, _ in shipped_tables)
+            if mod_dir.is_dir() and not (mod_dir / RSTB_LOG_NAME).exists():
+                try:
+                    names = self._changed_resource_names(mod_dir)
+                except Exception as e:
+                    names = []
+                    korok_merge._log(f"rstb: could not scan {mod_name}: {e}")
+                if names:
+                    changed_by_mod[mod_name] = (names, has_table)
+        if (not entries and not shipped_tables and not changed_by_mod
+                and not getattr(self, "text_langs_edited", [])
                 and not getattr(self, "rstb_delete_names", [])
                 and not getattr(self, "rstb_set_sizes", {})
                 and not getattr(self, "eventinfo_applied", False)):
@@ -828,11 +912,46 @@ default = true
                     f"{self.user_dir / 'mlc01'} (is the v208 update installed there?)")
 
         table = korok_rstb.SizeTable.from_file(vanilla)
+        vanilla_crc, vanilla_names = dict(table.crc), dict(table.names)
         added = updated = deleted = 0
-        for _mn, st in shipped_tables:
+        notes = []
+        for mn, st in shipped_tables:
             a, u = table.merge_larger(st)
             added += a
             updated += u
+            # BCML/UKMM remove the entry of every changed file whose size they can't
+            # calculate (models, textures, ...) so the game sizes it itself. A shipped
+            # table without an entry vanilla has is therefore a deliberate removal;
+            # keeping the vanilla entry makes the bigger modded file fail to load
+            # (e.g. a replaced player model simply doesn't show up).
+            gone_crc = [c for c in vanilla_crc if c not in st.crc]
+            gone_names = [n for n in vanilla_names if n not in st.names and n not in st.crc]
+            total = len(vanilla_crc) + len(vanilla_names)
+            if len(gone_crc) + len(gone_names) <= max(200, total // 10):
+                for c in gone_crc:
+                    if table.crc.pop(c, None) is not None:
+                        deleted += 1
+                for n in gone_names:
+                    if table.names.pop(n, None) is not None:
+                        deleted += 1
+            else:
+                notes.append(f"{mn}: its RSTB is missing {len(gone_crc) + len(gone_names)} "
+                             "vanilla entries, which looks like a different game version; "
+                             "only its larger sizes were used")
+        for mn, (names, has_table) in changed_by_mod.items():
+            n_del = 0
+            for nm in names:
+                if has_table:
+                    # the mod's own table may already give this file a proper size
+                    crc = korok_rstb.crc_of(nm)
+                    if table.crc.get(crc, 0) > vanilla_crc.get(crc, 0) or \
+                            table.names.get(nm, 0) > vanilla_names.get(nm, 0):
+                        continue
+                if table.delete(nm) == "deleted":
+                    n_del += 1
+            deleted += n_del
+            if n_del:
+                notes.append(f"{mn}: {n_del} entries removed for changed files")
         for name, size in entries.items():
             # BCML convention: size 0 = "size can't be calculated, remove the
             # entry" so the game sizes the resource itself. Keeping the vanilla
@@ -866,7 +985,101 @@ default = true
             target.unlink()  # may be a hard link to a staged mod's file
         table.save(target)
         return (f"RSTB patched: {updated} entries enlarged, {added} added, "
-                f"{deleted} removed (from {len(entries)} mod entries).")
+                f"{deleted} removed (from {len(entries)} mod entries)."
+                + ("\n  " + "\n  ".join(notes) if notes else ""))
+
+    # ---------- RSTB names of the files a mod changes ----------
+    RSTB_SKIP_EXTS = {".pack", ".srsizetable", ".rsizetable", ".txt", ".json", ".yml", ".md"}
+    SARC_EXTS = {".pack", ".sarc", ".ssarc", ".sbactorpack", ".bactorpack", ".sbmodelsh",
+                 ".bmodelsh", ".sbeventpack", ".beventpack", ".sstera", ".stera",
+                 ".sblarc", ".blarc", ".sstats", ".stats", ".sbgenv", ".bgenv"}
+
+    @staticmethod
+    def _rstb_resource_name(rel: str, data_head: bytes) -> str:
+        """'Model/X.sbfres' (Yaz0 data) -> 'Model/X.bfres'. RSTB names never carry the
+        's' that marks a Yaz0-compressed file."""
+        base, dot, ext = rel.rpartition(".")
+        if dot and data_head[:4] == b"Yaz0" and ext.startswith("s"):
+            ext = ext[1:]
+        return f"{base}.{ext}" if dot else rel
+
+    def _sarc_changed_names(self, mod_bytes: bytes, van_bytes, out: set, depth: int = 0):
+        """Adds to `out` the RSTB names of files in a SARC that differ from vanilla
+        (recursing into nested archives that changed)."""
+        oead = korok_merge.oead
+        unyaz = lambda b: bytes(oead.yaz0.decompress(b)) if b[:4] == b"Yaz0" else bytes(b)
+        mraw = unyaz(mod_bytes)
+        if mraw[:4] != b"SARC":
+            return
+        vsarc = None
+        if van_bytes:
+            vraw = unyaz(van_bytes)
+            if vraw[:4] == b"SARC":
+                vsarc = oead.Sarc(vraw)
+        for f in oead.Sarc(mraw).get_files():
+            data = bytes(f.data)
+            vf = vsarc.get_file(f.name) if vsarc is not None else None
+            vdata = bytes(vf.data) if vf is not None else None
+            if vdata is not None and vdata == data:
+                continue
+            ext = "." + f.name.rpartition(".")[2].lower() if "." in f.name else ""
+            if ext not in self.RSTB_SKIP_EXTS:
+                out.add(self._rstb_resource_name(f.name.lstrip("/"), data[:4]))
+            if ext in self.SARC_EXTS and depth < 4:
+                try:
+                    self._sarc_changed_names(data, vdata, out, depth + 1)
+                except Exception:
+                    pass
+
+    def _changed_resource_names(self, mod_dir: pathlib.Path) -> list:
+        """RSTB names of every game file (also inside packs) the mod changes or adds.
+        Cached by the mod's fingerprint, the scan of big packs isn't free."""
+        key = korok_merge._cache_key("rstbscan", mod_dir.name, self._mod_fingerprint(mod_dir))
+        cache = CACHE_DIR / f"{key}.json"
+        if cache.is_file():
+            try:
+                return json.loads(cache.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        roots = self._vanilla_roots()
+        out = set()
+        for game_dir in ("content", "aoc"):
+            top = mod_dir / game_dir
+            if not top.is_dir():
+                continue
+            for f in top.rglob("*"):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(top).as_posix()
+                ext = f.suffix.lower()
+                if rel.startswith("System/Resource/") or ext in {".txt", ".json", ".yml", ".md"}:
+                    continue
+                # staged aoc files sit under aoc/0010/, the vanilla aoc roots already end in 0010
+                vrel = rel[5:] if game_dir == "aoc" and rel.startswith("0010/") else rel
+                van = korok_merge._find_vanilla(f"{game_dir}/{vrel}", roots)
+                if van is not None and van.stat().st_size == f.stat().st_size \
+                        and korok_merge.file_hash(van) == korok_merge.file_hash(f):
+                    continue                                   # unchanged copy of vanilla
+                with open(f, "rb") as fh:
+                    head = fh.read(4)
+                name = self._rstb_resource_name(rel, head)
+                if game_dir == "aoc":
+                    name = "Aoc/" + name
+                if ext not in self.RSTB_SKIP_EXTS:
+                    out.add(name)
+                if ext in self.SARC_EXTS and korok_merge.available():
+                    try:
+                        self._sarc_changed_names(
+                            f.read_bytes(), van.read_bytes() if van is not None else None, out)
+                    except Exception as e:
+                        korok_merge._log(f"rstb scan {mod_dir.name}/{game_dir}/{rel}: {e}")
+        names = sorted(out)
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(names), encoding="utf-8")
+        except OSError:
+            pass
+        return names
 
     @staticmethod
     def _link_or_copy(src: pathlib.Path, dst: pathlib.Path):

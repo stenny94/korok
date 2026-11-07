@@ -584,15 +584,37 @@ class KorokUI(QMainWindow):
             self,
             "Select Mod Archives (hold Ctrl/Shift to select several)",
             "",
-            "BotW Mod Files (*.bnp *.zip);;BNP Files (*.bnp);;Zip Files (*.zip)",
+            "BotW Mod Files (*.bnp *.zip *.7z);;BNP Files (*.bnp);;Zip Files (*.zip);;7-Zip Files (*.7z)",
         )
         if file_paths:
+            if any(self.engine.is_ukmm_archive(p) for p in file_paths) and not self.ensure_ukmm():
+                file_paths = [p for p in file_paths if not self.engine.is_ukmm_archive(p)]
+                if not file_paths:
+                    return
             self.start_job([("file", p) for p in file_paths])
+
+    def ensure_ukmm(self) -> bool:
+        """UKMM packages are converted by running UKMM; make sure we know where ukmm.exe is."""
+        if self.engine.ukmm_exe() is not None:
+            return True
+        QMessageBox.information(
+            self, "UKMM needed",
+            "This is a UKMM mod package. Its files are stored in UKMM's own format, so Korok "
+            "runs UKMM in the background to convert it (your own UKMM mods and settings are "
+            "not touched).\n\nUKMM must be set up once for Wii U (game dump folders). "
+            "Point Korok at ukmm.exe next.")
+        exe, _ = QFileDialog.getOpenFileName(self, "Locate ukmm.exe", "", "UKMM (ukmm.exe ukmm);;All files (*)")
+        if not exe:
+            return False
+        self.engine.set_ukmm_exe(exe)
+        return True
 
     def import_mod_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Select a graphic pack folder (contains 'content' and/or 'aoc')")
         if folder:
+            if self.engine.is_ukmm_archive(folder) and not self.ensure_ukmm():
+                return
             self.start_job([("file", folder)])
 
     def closeEvent(self, event):

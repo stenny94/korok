@@ -16,6 +16,12 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 ## Features
 
 - Import mods from `.zip`, `.7z`, `.bnp` or a plain folder
+- Import UKMM mod packages: Korok runs your UKMM install in the background to convert them
+  (UKMM must be set up once for Wii U; your own UKMM mods and settings are left alone).
+  UKMM mods with install options still need to be installed and deployed in UKMM itself,
+  then imported with **Import Folder...**
+- Archives with several option folders (hair styles, colours, ...) are imported as one main
+  mod plus a disabled mod per option, so you can pick the ones you want
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
   drop tables, shops, quests, map units, dialogue, event info and more
 - Load order and mod playlists
@@ -91,13 +97,13 @@ Mods I have tested with Korok. This is a small list, so a mod not being here doe
 | [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Works |
 | [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Works |
 | [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Works |
-| Zelda's Ballad | | Works, but Zelda has no hair unless she is wearing a headdress |
+| Zelda's Ballad | | Worked, but Zelda had no hair unless she wore a headdress. Korok now removes the RSTB entries of files a mod replaces so bigger models load. Needs retesting |
 
 ### Not working
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version will not load into the manager period |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version can now be imported through UKMM (needs retesting) |
 
 ## Troubleshooting
 
