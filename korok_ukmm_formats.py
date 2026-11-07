@@ -1651,3 +1651,137 @@ def mapunit_build(data, vanilla, canon):
 
 
 BUILDERS["MapUnit"] = mapunit_build
+
+
+# ------------------------------------------------------------- QuestProduct (Quest/QuestProduct.sbquestpack)
+def quest_build(data, vanilla, canon):
+    diff = _byml_dmap(data, str)
+    if vanilla is None:
+        model = {k: v for k, v in diff.items() if not v[1]}
+    else:
+        base = {str(q["Name"]): [q, False] for q in oead.byml.from_binary(vanilla)}
+        model = dmap_merge(base, diff)
+    return byml_to_binary(oead.byml.Array([v[0] for v in model.values()]))
+
+
+BUILDERS["QuestProduct"] = quest_build
+
+
+# ------------------------------------------------------------- ResidentActors (Actor/ResidentActors.byml)
+def residents_build(data, vanilla, canon):
+    diff = {str(k): [{"only_res": bool(v[0]["only_res"]),
+                      "scale": _bc(v[0]["scale"]) if v[0].get("scale") is not None else None}, bool(v[1])]
+            for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {}
+        for a in oead.byml.from_binary(vanilla):
+            base[str(a["name"])] = [{"only_res": bool(need(a.get("only_res"), "missing only_res")),
+                                     "scale": a.get("scale")}, False]
+        model = dmap_merge(dict(sorted(base.items())), diff, sort=True)
+    arr = oead.byml.Array()
+    for name, (d, _) in model.items():
+        h = oead.byml.Hash({"name": name, "only_res": d["only_res"]})
+        if d.get("scale") is not None:
+            h["scale"] = d["scale"]
+        arr.append(h)
+    return byml_to_binary(arr)
+
+
+BUILDERS["ResidentActors"] = residents_build
+
+
+# ------------------------------------------------------------- ResidentEvents (Event/ResidentEvent.byml)
+def resevents_build(data, vanilla, canon):
+    diff = {str(k): [dict(v[0]), bool(v[1])] for k, v in data.items()}
+    if vanilla is None:
+        model = {k: v for k, v in diff.items() if not v[1]}
+    else:
+        base = {}
+        for e in oead.byml.from_binary(vanilla):
+            base.setdefault(str(e["entry"]), [{}, False])[0][str(e["file"])] = False
+        model = dmap_merge(base, diff)
+    arr = oead.byml.Array()
+    for entry, (files, _) in model.items():
+        for f, dl in files.items():
+            if not dl:
+                arr.append(oead.byml.Hash({"entry": entry, "file": f}))
+    return byml_to_binary(arr)
+
+
+BUILDERS["ResidentEvents"] = resevents_build
+
+
+# ------------------------------------------------------------- AreaData (Ecosystem/AreaData.sbyml)
+def areadata_build(data, vanilla, canon):
+    diff = _byml_dmap(data, int)
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        base = {int(a["AreaNumber"].v if hasattr(a["AreaNumber"], "v") else a["AreaNumber"]): [a, False]
+                for a in oead.byml.from_binary(vanilla)}
+        model = deep_merge(dict(sorted(base.items())), diff, _byml_shallow, sort=True)
+    return byml_to_binary(oead.byml.Array([v[0] for v in model.values()]))
+
+
+BUILDERS["AreaData"] = areadata_build
+
+
+# ------------------------------------------------------------- Static (Map/CDungeon/Static.smubin)
+def _btext(b) -> str:
+    return oead.byml.to_text(b) if isinstance(b, (oead.byml.Hash, oead.byml.Array)) else repr(b)
+
+
+def _dvec_merge_byml(base: list, diff: list) -> list:
+    """DeleteVec<Byml>::merge, comparing BYML values by content."""
+    deleted = {_btext(it) for it, d in diff if d}
+    items = [it for it, d in base if not d and _btext(it) not in deleted]
+    keys = [_btext(it) for it in items]
+    for idx, it in enumerate(x for x, d in diff if not d):
+        if _btext(it) not in keys:
+            items.insert(idx, it)
+            keys.insert(idx, _btext(it))
+    return [[it, False] for it in items]
+
+
+def static_build(data, vanilla, canon):
+    d_general = {str(k): [[_bc(it), bool(dl)] for it, dl in v] for k, v in (data.get("general") or {}).items()}
+    d_start = {}
+    for m, (entries, dl) in (data.get("start_pos") or {}).items():
+        d_start[str(m)] = [{str(p): [{"rotate": _bc(e[0]["rotate"]), "translate": _bc(e[0]["translate"]),
+                                      "player_state": e[0].get("player_state")}, bool(e[1])]
+                            for p, e in entries.items()}, bool(dl)]
+    if vanilla is None:
+        general = {k: v for k, v in sorted(d_general.items())}
+        start = {k: v for k, v in d_start.items() if not v[1]}
+    else:
+        root = oead.byml.from_binary(vanilla)
+        base_start = {}
+        for e in root.get("StartPos") or []:
+            if "PosName" not in e:
+                continue
+            base_start.setdefault(str(e["Map"]), [{}, False])[0][str(e["PosName"])] = [
+                {"rotate": e["Rotate"], "translate": e["Translate"],
+                 "player_state": str(e["PlayerState"]) if "PlayerState" in e else None}, False]
+        base_general = {k: [[it, False] for it in v] for k, v in sorted(root.items()) if k != "StartPos"}
+        # Static::merge keeps only the base's general keys
+        general = {k: (_dvec_merge_byml(v, d_general[k]) if k in d_general else v) for k, v in base_general.items()}
+        start = deep_merge(base_start, d_start, lambda b, d: dmap_merge(b, d))
+    out = oead.byml.Hash()
+    sp = oead.byml.Array()
+    for m, (entries, _) in start.items():
+        for pos, (e, dl) in entries.items():
+            if dl:
+                continue
+            h = oead.byml.Hash({"Map": m, "PosName": pos, "Rotate": e["rotate"], "Translate": e["translate"]})
+            if e.get("player_state") is not None:
+                h["PlayerState"] = e["player_state"]
+            sp.append(h)
+    out["StartPos"] = sp
+    for k, v in general.items():
+        out[k] = oead.byml.Array([it for it, dl in v if not dl])
+    return byml_to_binary(out)
+
+
+BUILDERS["Static"] = static_build
