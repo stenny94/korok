@@ -1,6 +1,6 @@
 # korok
 A mod manager, save manager and save editor for **The Legend of Zelda: Breath of the Wild**
-on **Cemu** (Windows). Korok imports mods, merges them together, and writes the result into a
+on **Cemu**. Korok imports mods, merges them together, and writes the result into a
 Cemu graphic pack so they work together without conflicts. It also keeps separate save files
 for different playthroughs and lets you edit them.
 
@@ -19,7 +19,7 @@ for different playthroughs and lets you edit them.
 - **Save editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write
 - Launch Cemu and BotW straight from Korok
-- 1-click install links
+- 1-click install links (**WIP**)
 
 ## Requirements
 
@@ -43,7 +43,7 @@ for different playthroughs and lets you edit them.
    or clone it:
 
    ```
-   git clone https://github.com/<your-username>/korok.git
+   git clone https://github.com/stenny94/korok.git
    ```
 
 2. Open a terminal in the Korok folder and install the requirements:
