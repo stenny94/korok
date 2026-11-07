@@ -14,6 +14,7 @@ import korok_rstb
 import korok_merge
 import korok_mergers
 import korok_ukmm
+import korok_ukmm_native
 
 try:
     import winreg
@@ -127,6 +128,10 @@ class KorokEngine:
 
     def set_ukmm_exe(self, path: str):
         self._write_config(ukmm_exe=str(path))
+
+    @staticmethod
+    def native_ukmm_available() -> bool:
+        return korok_ukmm_native.available()
 
     @staticmethod
     def is_ukmm_archive(path) -> bool:
@@ -309,20 +314,16 @@ default = true
                 self._extract_archive(archive_path, temp_extract)
                 scan = temp_extract
 
+            force_disabled = False
             if self._is_ukmm_package(scan):
-                # UKMM stores its own encoded resources, not game files: let UKMM
-                # turn the package into a deployed folder and import that.
+                # UKMM stores its own encoded resources, not game files: rebuild them
+                # (natively, or with UKMM itself) and import the result as a folder.
                 ukmm_name = korok_ukmm.package_name(archive_path)
-                deployed = korok_ukmm.convert(archive_path, self.ukmm_exe(), log=self._ukmm_log)
-                from_dir = True
-                root = deployed
                 if ukmm_name:
                     safe_name = self._safe_name(ukmm_name)
                     staged_mod_path = self.staging_dir / safe_name
-                warnings.append(
-                    f"'{safe_name}' is a UKMM package; it was converted with UKMM. The result is "
-                    "already merged with the game files, so if another mod changes the same files, "
-                    "whichever is lower in the load order wins.")
+                root, force_disabled = self._convert_ukmm(archive_path, temp_extract, safe_name, warnings)
+                from_dir = True
                 roots = [root]
             else:
                 roots = self._find_pack_roots(scan)
@@ -397,7 +398,8 @@ default = true
             if _option_of and was_known:
                 self._register_mod(safe_name, enable=None)   # keep the user's choice
             else:
-                self._register_mod(safe_name, enable=not needs_merge and not _option_of)
+                self._register_mod(safe_name, enable=not needs_merge and not _option_of
+                                   and not force_disabled)
             self._known_before = set()
 
             entries = self._load_rstb_log(logs)
@@ -428,10 +430,65 @@ default = true
 
         return warnings
 
+    def _convert_ukmm(self, archive_path, temp_dir, name, warnings):
+        """UKMM package -> folder with content/ and aoc/0010/. Korok's own reader first;
+        UKMM itself (if installed) when the package uses something not ported yet.
+        Returns (folder, import_disabled)."""
+        native_why = ""
+        if not korok_ukmm_native.available():
+            native_why = ("Korok's UKMM reader needs: pip install " +
+                          " ".join(korok_ukmm_native.missing_requirements() or ["oead", "cbor2", "zstandard"]))
+        elif not archive_path.is_file() or not zipfile.is_zipfile(archive_path):
+            native_why = "Korok's UKMM reader only reads the .zip package itself"
+        conv = None
+        if not native_why:
+            out = pathlib.Path(temp_dir) / "_korok_ukmm_native"
+            try:
+                conv = korok_ukmm_native.convert_package(
+                    archive_path, out, korok_ukmm_native.dump_from_cemu(self.user_dir),
+                    log=self._ukmm_log)
+            except Exception as e:
+                native_why = f"Korok's UKMM reader failed: {e}"
+        if conv is not None:
+            gaps = []
+            for kind, files in sorted(conv.unsupported.items()):
+                gaps.append(f"{kind} ({len(files)} file{'s' if len(files) != 1 else ''}, "
+                            f"e.g. {files[0]})")
+            if conv.pkg.has_options:
+                gaps.append("install options (only the base files were used)")
+            self._ukmm_log("Native UKMM conversion\n"
+                           f"built: {conv.built}\nunsupported: {dict(conv.unsupported)}\n"
+                           f"problems: {conv.problems}\n")
+            if not gaps and not conv.problems:
+                warnings.append(
+                    f"'{name}' is a UKMM package; Korok rebuilt its {conv.built} game file(s) itself. "
+                    "The result is already merged with the game files, so if another mod changes the "
+                    "same files, whichever is lower in the load order wins.")
+                return out, False
+            native_why = ("Korok's UKMM reader can't rebuild everything in this mod yet: "
+                          + "; ".join(gaps + conv.problems[:5]))
+        exe = self.ukmm_exe()
+        if exe is not None:
+            deployed = korok_ukmm.convert(archive_path, exe, log=self._ukmm_log)
+            warnings.append(
+                f"'{name}' is a UKMM package. {native_why}. It was converted with UKMM instead. "
+                "The result is already merged with the game files, so if another mod changes the "
+                "same files, whichever is lower in the load order wins.")
+            return deployed, False
+        if conv is None:
+            raise RuntimeError(f"Can't import this UKMM package. {native_why}. "
+                               "Installing UKMM (and pointing Korok at ukmm.exe) also works.")
+        warnings.append(
+            f"'{name}' is a UKMM package. {native_why}. Those parts are MISSING, so it was imported "
+            "DISABLED. Install UKMM and re-import to convert it completely, or tick it to try it "
+            "as it is.")
+        return out, True
+
     @staticmethod
     def _ukmm_log(text: str):
         try:
-            (LOGS_DIR / "korok_ukmm.log").write_text(text, encoding="utf-8")
+            with open(LOGS_DIR / "korok_ukmm.log", "a", encoding="utf-8") as f:
+                f.write(text.rstrip() + "\n")
         except Exception:
             pass
 

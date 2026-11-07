@@ -6,3 +6,5 @@ oead>=1.2           # BYML / AAMP / SARC / Yaz0 handling (merge logs, packs, sav
 PyYAML>=6.0         # event info (eventinfo.yml) merging
 pymsyt>=1.0         # bundled msyt tool, needed to apply dialogue (texts.json)
 py7zr>=0.20         # import of .7z mod archives
+cbor2>=5.4           # reading UKMM mod packages
+zstandard>=0.19      # reading UKMM mod packages

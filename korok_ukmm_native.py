@@ -448,6 +448,22 @@ class Converter:
             return vanilla
         return self.build_sarc(vanilla, sarc_diff, aoc, canon)
 
+    def _touched(self, name, raw, aoc, depth=0) -> bool:
+        """Does the mod change this file, or anything inside it?"""
+        path = f"Aoc/0010/{name}" if aoc and not name.startswith("Aoc/0010/") else name
+        canon = canonicalize(path)
+        if self.pkg.has(canon):
+            return True
+        if depth > 4:
+            return False
+        try:
+            data = unyaz(raw)
+            if not is_mergeable_sarc(canon, data):
+                return False
+            return any(self._touched(f.name, bytes(f.data), aoc, depth + 1) for f in oead.Sarc(data).get_files())
+        except Exception:
+            return True
+
     def build_sarc(self, vanilla, diff, aoc, canon) -> bytes:
         if vanilla is not None:
             vs = oead.Sarc(vanilla)
@@ -463,6 +479,13 @@ class Converter:
         except Exception:
             pass
         for name in sorted(n for n, d in names.items() if not d):
+            raw = None
+            if vanilla is not None:
+                f = vs.get_file(name)
+                raw = bytes(f.data) if f is not None else None
+            if raw is not None and not self._touched(name, raw, aoc):
+                writer.files[name] = raw            # untouched: keep the vanilla bytes as they are
+                continue
             try:
                 data = self.build_file(name, aoc)
             except FileNotFoundError as e:
@@ -634,3 +657,25 @@ def merge_plist_cbor(base: dict, diff: dict) -> dict:
     for k, v in (diff.get("lists") or {}).items():
         lists[k] = merge_plist_cbor(lists[k], v) if k in lists else v
     return {"lists": lists, "objects": objs}
+
+
+# ------------------------------------------------------------- entry point for Korok
+def dump_from_cemu(user_dir, title_ids=("101c9400", "101c9500", "101c9300")):
+    title = pathlib.Path(user_dir) / "mlc01" / "usr" / "title"
+    base = [title / "00050000" / t / "content" for t in title_ids]
+    update = [title / "0005000e" / t / "content" for t in title_ids]
+    aoc = [title / "0005000c" / t / "content" / "0010" for t in title_ids]
+    return Dump([d for d in base if d.is_dir()], [d for d in update if d.is_dir()],
+                [d for d in aoc if d.is_dir()])
+
+
+def convert_package(package_path, out_dir, dump: Dump, progress=None, log=None):
+    """Returns the Converter (see .built, .unsupported, .problems, .pkg)."""
+    if not (dump.dirs[1] or dump.dirs[2]):
+        raise FileNotFoundError("the game's files weren't found in Cemu's mlc01 folder "
+                                "(base game and v208 update must be installed there)")
+    pkg = Package(package_path)
+    try:
+        return Converter(pkg, dump, log=log).convert(pathlib.Path(out_dir), progress=progress)
+    finally:
+        pkg.close()
