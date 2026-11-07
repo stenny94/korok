@@ -2132,3 +2132,140 @@ def shopgd_build(data, vanilla, canon):
 
 
 BUILDERS["ShopGameDataInfo"] = shopgd_build
+
+
+# ------------------------------------------------------------- CookData (Cooking/CookData.sbyml)
+def _ckey(x) -> str:
+    import json
+    return json.dumps(x, sort_keys=True, default=str)
+
+
+def _dvec_merge_key(base: list, diff: list) -> list:
+    """DeleteVec::merge comparing items by value (dicts/lists)."""
+    deleted = {_ckey(it) for it, d in diff if d}
+    items = [it for it, d in base if not d and _ckey(it) not in deleted]
+    keys = [_ckey(it) for it in items]
+    for idx, it in enumerate(x for x, d in diff if not d):
+        if _ckey(it) not in keys:
+            items.insert(idx, it)
+            keys.insert(idx, _ckey(it))
+    return [[it, False] for it in items]
+
+
+def _ival(v) -> int:
+    return _i32(v.v if hasattr(v, "v") else v)
+
+
+def _dv(items):
+    return [[x, False] for x in items]
+
+
+def _norm_dv(dv, inner=None):
+    """serde DeleteVec from CBOR -> same shape with normalized items."""
+    if dv is None:
+        return None
+    return [[inner(it) if inner else it, bool(d)] for it, d in dv]
+
+
+def _recipe_from(h, single):
+    out = {}
+    if single:
+        out["actors"] = _dv([_ival(i) for i in h["Actors"]]) if "Actors" in h else None
+        out["tags"] = _dv([_ival(i) for i in h["Tags"]]) if "Tags" in h else None
+        out["num"] = _ival(h["Num"])
+    else:
+        out["actors"] = _dv([_dv([_ival(i) for i in a]) for a in h["Actors"]]) if "Actors" in h else None
+        out["tags"] = _dv([_dv([_ival(i) for i in a]) for a in h["Tags"]]) if "Tags" in h else None
+    out["hb"] = _ival(h["HB"]) if "HB" in h else None
+    out["recipe"] = _ival(need(h.get("Recipe"), "Recipe"))
+    return out
+
+
+def _recipe_norm(r, single):
+    out = {"hb": _i32(r["hb"]) if r.get("hb") is not None else None, "recipe": _i32(r["recipe"])}
+    for k in ("actors", "tags"):
+        v = r.get(k)
+        out[k] = None if v is None else (_norm_dv(v, _i32) if single else
+                                         _norm_dv(v, lambda inner: _norm_dv(inner, _i32)))
+    if single:
+        out["num"] = _i32(r["num"])
+    return out
+
+
+def _signed_byml(v):
+    return oead.U32(v & 0xFFFFFFFF) if v < 0 else oead.S32(v)
+
+
+def _recipe_to(r, single):
+    h = oead.byml.Hash()
+    for key, field in (("Actors", "actors"), ("Tags", "tags")):
+        v = r.get(field)
+        if v is None:
+            continue
+        if single:
+            h[key] = oead.byml.Array([_signed_byml(x) for x, d in v if not d])
+        else:
+            h[key] = oead.byml.Array([oead.byml.Array([_signed_byml(x) for x, dd in inner if not dd])
+                                      for inner, d in v if not d])
+    if r.get("hb") is not None:
+        h["HB"] = oead.S32(r["hb"])
+    if single:
+        h["Num"] = oead.S32(r["num"])
+    h["Recipe"] = _signed_byml(r["recipe"])
+    return h
+
+
+_CEI = [("bt", "BT"), ("mr", "MR"), ("ma", "Ma"), ("mi", "Mi"), ("ssa", "SSA"), ("t", "T")]
+_SYS_SCALARS = [("fa", "FA", "str"), ("falr", "FALR", "i32"), ("falrmr", "FALRMR", "f32"), ("fca", "FCA", "str"),
+                ("lrmr", "LRMR", "f32"), ("mea", "MEA", "str"), ("sfalr", "SFALR", "i32"), ("ssaet", "SSAET", "i32")]
+
+
+def _sys_from(h):
+    out = {"cei": _dv([{f: (_f(c[k]) if f == "mr" else _ival(c[k])) for f, k in _CEI} for c in h["CEI"]]),
+           "nmmr": _dv([_f(x) for x in h["NMMR"]]), "nmssr": _dv([_ival(x) for x in h["NMSSR"]])}
+    for f, k, kind in _SYS_SCALARS:
+        out[f] = str(h[k]) if kind == "str" else (_f(h[k]) if kind == "f32" else _ival(h[k]))
+    return out
+
+
+def _sys_norm(s):
+    out = {"cei": _norm_dv(s["cei"], lambda c: {f: (float(c[f]) if f == "mr" else _i32(c[f])) for f, _ in _CEI}),
+           "nmmr": _norm_dv(s["nmmr"], float), "nmssr": _norm_dv(s["nmssr"], _i32)}
+    for f, _, kind in _SYS_SCALARS:
+        out[f] = str(s[f]) if kind == "str" else (float(s[f]) if kind == "f32" else _i32(s[f]))
+    return out
+
+
+def cookdata_build(data, vanilla, canon):
+    d = {"recipes": _norm_dv(data["recipes"], lambda r: _recipe_norm(r, False)),
+         "single_recipes": _norm_dv(data["single_recipes"], lambda r: _recipe_norm(r, True)),
+         "system": _sys_norm(data["system"])}
+    if vanilla is None:
+        m = d
+    else:
+        h = oead.byml.from_binary(vanilla)
+        b = {"recipes": _dv([_recipe_from(r, False) for r in h["Recipes"]]),
+             "single_recipes": _dv([_recipe_from(r, True) for r in h["SingleRecipes"]]),
+             "system": _sys_from(h["System"])}
+        sysm = dict(d["system"])
+        for f in ("cei", "nmmr", "nmssr"):
+            sysm[f] = _dvec_merge_key(b["system"][f], d["system"][f])
+        m = {"recipes": _dvec_merge_key(b["recipes"], d["recipes"]),
+             "single_recipes": _dvec_merge_key(b["single_recipes"], d["single_recipes"]), "system": sysm}
+    s = m["system"]
+    sysh = oead.byml.Hash()
+    sysh["CEI"] = oead.byml.Array([oead.byml.Hash({k: (oead.F32(c[f]) if f == "mr" else
+                                                       (_signed_byml(c[f]) if f == "t" else oead.S32(c[f])))
+                                                   for f, k in _CEI}) for c, dl in s["cei"] if not dl])
+    for f, k, kind in _SYS_SCALARS:
+        sysh[k] = s[f] if kind == "str" else (oead.F32(s[f]) if kind == "f32" else oead.S32(s[f]))
+    sysh["NMMR"] = oead.byml.Array([oead.F32(x) for x, dl in s["nmmr"] if not dl])
+    sysh["NMSSR"] = oead.byml.Array([oead.S32(x) for x, dl in s["nmssr"] if not dl])
+    out = oead.byml.Hash({
+        "Recipes": oead.byml.Array([_recipe_to(r, False) for r, dl in m["recipes"] if not dl]),
+        "SingleRecipes": oead.byml.Array([_recipe_to(r, True) for r, dl in m["single_recipes"] if not dl]),
+        "System": sysh})
+    return byml_to_binary(out)
+
+
+BUILDERS["CookData"] = cookdata_build
