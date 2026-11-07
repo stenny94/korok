@@ -97,7 +97,7 @@ Mods I have tested with Korok. This is a small list, so a mod not being here doe
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version will not load into the manager period |
 
 ## Troubleshooting
 
