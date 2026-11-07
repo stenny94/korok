@@ -914,3 +914,338 @@ def shop_to(m):
 
 
 typed("ShopData", shop_from, shop_merge, shop_to)
+
+
+# ------------------------------------------------------------- Physics (.bphysics)
+CONTACT_ITEM = [("name", "name", "s32", False), ("info_type", "type", "s32", False), ("num", "num", "i32", True)]
+CONTACT_HDR = 3387849585
+CHAR_HDR = 2311816730
+PHYS_HDR = 1258832850
+
+
+def _pbool(o, name):
+    p = need(o.params.get(A.Name(name)), f"Physics header missing {name}")
+    return bool(p.v)
+
+
+def _contact_from(l):
+    hdr = need(l.objects.get(A.Name(CONTACT_HDR)), "contact info missing header")
+    pn = need(_pint(hdr, "contact_point_info_num"), "contact point count")
+    cn = need(_pint(hdr, "collision_info_num"), "collision count")
+    return {"contact_point_info": [paramdata_from(need(obj(l, f"ContactPointInfo_{i}"), "contact entry"), CONTACT_ITEM)
+                                   for i in range(pn)],
+            "collision_info": [paramdata_from(need(obj(l, f"CollisionInfo_{i}"), "collision entry"), CONTACT_ITEM)
+                               for i in range(cn)]}
+
+
+def _contact_to(c):
+    l = A.ParameterList()
+    if c.get("contact_point_info") is not None and c.get("collision_info") is not None:
+        hdr = A.ParameterObject()
+        hdr.params["contact_point_info_num"] = P(oead.S32(len(c["contact_point_info"])))
+        hdr.params["collision_info_num"] = P(oead.S32(len(c["collision_info"])))
+        add_obj(l, CONTACT_HDR, hdr)
+        for i, it in enumerate(c["contact_point_info"]):
+            add_obj(l, f"ContactPointInfo_{i}", paramdata_to(it, CONTACT_ITEM))
+        for i, it in enumerate(c["collision_info"]):
+            add_obj(l, f"CollisionInfo_{i}", paramdata_to(it, CONTACT_ITEM))
+    return l
+
+
+def _contact_merge(b, d):
+    return {"contact_point_info": d.get("contact_point_info") if d.get("contact_point_info") is not None
+            else b.get("contact_point_info"),
+            "collision_info": d.get("collision_info") if d.get("collision_info") is not None
+            else b.get("collision_info")}
+
+
+def _cloth_from(l):
+    hdr = need(obj(l, "ClothHeader"), "Physics missing cloth header")
+    n = need(_pint(hdr, "cloth_num"), "cloth count")
+    return {"setup_file_path": need(pstr(hdr, "cloth_setup_file_path"), "cloth setup path"),
+            "subwind": pobj_to_cbor(need(obj(l, "ClothSubWind"), "cloth subwind")),
+            "cloths": {i: pobj_to_cbor(need(obj(l, f"Cloth_{i}"), f"Cloth_{i}")) for i in range(n)}}
+
+
+def _cloth_to(c):
+    l = A.ParameterList()
+    hdr = A.ParameterObject()
+    hdr.params["cloth_setup_file_path"] = P(oead.FixedSafeString256(c.get("setup_file_path") or ""))
+    cloths = ilist(c["cloths"])
+    hdr.params["cloth_num"] = P(oead.S32(len(cloths)))
+    add_obj(l, "ClothHeader", hdr)
+    set_obj(l, "ClothSubWind", c["subwind"])
+    for i, o in cloths.items():
+        set_obj(l, f"Cloth_{i}", o)
+    return l
+
+
+def physics_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    ps = need(lst(pio, "ParamSet"), "Physics missing ParamSet")
+    hdr = need(ps.objects.get(A.Name(PHYS_HDR)), "Physics missing header")
+    out = {"ragdoll": None, "support_bone": None, "rigid_contact_info": None, "rigid_body_set": None,
+           "character_controller": None, "cloth": None}
+    if _pbool(hdr, "use_ragdoll"):
+        out["ragdoll"] = need(pstr(obj(ps, "Ragdoll"), "ragdoll_setup_file_path"), "ragdoll path")
+    if _pbool(hdr, "use_support_bone"):
+        out["support_bone"] = need(pstr(obj(ps, "SupportBone"), "support_bone_setup_file_path"), "support bone path")
+    if _pbool(hdr, "use_contact_info"):
+        out["rigid_contact_info"] = _contact_from(need(lst(ps, "RigidContactInfo"), "rigid contact info"))
+    n = need(_pint(hdr, "use_rigid_body_set_num"), "use_rigid_body_set_num")
+    if n > 0:
+        rbs = need(lst(ps, "RigidBodySet"), "rigid body set list")
+        out["rigid_body_set"] = {i: plist_to_cbor(need(lst(rbs, f"RigidBodySet_{i}"), "rigid body set entry"))
+                                 for i in range(n)}
+    if _pbool(hdr, "use_character_controller"):
+        cc = need(lst(ps, "CharacterController"), "character controller")
+        out["character_controller"] = {
+            "header": pobj_to_cbor(need(cc.objects.get(A.Name(CHAR_HDR)), "controller header")),
+            "forms": {i: plist_to_cbor(f) for i, (_, f) in enumerate(cc.lists.items())}}
+    if _pbool(hdr, "use_cloth"):
+        out["cloth"] = _cloth_from(need(lst(ps, "Cloth"), "cloth section"))
+    out["use_system_group_handler"] = _pbool(hdr, "use_system_group_handler")
+    return out
+
+
+def _first(d, b, key):
+    return d.get(key) if d.get(key) is not None else b.get(key)
+
+
+def physics_merge(b, d):
+    return {
+        "ragdoll": _first(d, b, "ragdoll"),
+        "support_bone": _first(d, b, "support_bone"),
+        "rigid_contact_info": opt_merge(b.get("rigid_contact_info"), d.get("rigid_contact_info"), _contact_merge),
+        "rigid_body_set": opt_merge(b.get("rigid_body_set"), d.get("rigid_body_set"),
+                                    lambda x, y: index_merge(ilist(x), y)),
+        "character_controller": opt_merge(
+            b.get("character_controller"), d.get("character_controller"),
+            lambda x, y: {"header": merge_pobj_cbor(x["header"], y["header"]),
+                          "forms": index_merge(ilist(x["forms"]), y["forms"])}),
+        "cloth": opt_merge(b.get("cloth"), d.get("cloth"),
+                           lambda x, y: {"setup_file_path": _first(y, x, "setup_file_path"),
+                                         "subwind": merge_pobj_cbor(x["subwind"], y["subwind"]),
+                                         "cloths": index_merge(ilist(x["cloths"]), y["cloths"])}),
+        "use_system_group_handler": _first(d, b, "use_system_group_handler"),
+    }
+
+
+def physics_to(m):
+    pio = new_pio()
+    ps = A.ParameterList()
+    hdr = A.ParameterObject()
+    rbs = ilist(m["rigid_body_set"]) if m.get("rigid_body_set") is not None else None
+    hdr.params["use_rigid_body_set_num"] = P(oead.S32(len(rbs) if rbs is not None else 0))
+    hdr.params["use_ragdoll"] = P(m.get("ragdoll") is not None)
+    hdr.params["use_cloth"] = P(m.get("cloth") is not None)
+    hdr.params["use_support_bone"] = P(m.get("support_bone") is not None)
+    hdr.params["use_character_controller"] = P(m.get("character_controller") is not None)
+    hdr.params["use_contact_info"] = P(m.get("rigid_contact_info") is not None)
+    hdr.params["use_edge_rigid_body_num"] = P(oead.S32(0))
+    hdr.params["use_system_group_handler"] = P(bool(m.get("use_system_group_handler") or False))
+    add_obj(ps, PHYS_HDR, hdr)
+    for name, key, field in (("Ragdoll", "ragdoll_setup_file_path", "ragdoll"),
+                             ("SupportBone", "support_bone_setup_file_path", "support_bone")):
+        if m.get(field) is not None:
+            o = A.ParameterObject()
+            o.params[key] = P(oead.FixedSafeString256(m[field]))
+            add_obj(ps, name, o)
+    if m.get("rigid_contact_info") is not None:
+        add_list(ps, "RigidContactInfo", _contact_to(m["rigid_contact_info"]))
+    if rbs is not None:
+        l = A.ParameterList()
+        for i, x in rbs.items():
+            add_list(l, f"RigidBodySet_{i}", plist_from_cbor(x))
+        add_list(ps, "RigidBodySet", l)
+    if m.get("character_controller") is not None:
+        cc = m["character_controller"]
+        l = A.ParameterList()
+        set_obj(l, CHAR_HDR, cc["header"])
+        for i, f in ilist(cc["forms"]).items():
+            add_list(l, f"Form_{i}", plist_from_cbor(f))
+        add_list(ps, "CharacterController", l)
+    if m.get("cloth") is not None:
+        add_list(ps, "Cloth", _cloth_to(m["cloth"]))
+    add_list(pio, "ParamSet", ps)
+    return bytes(pio.to_binary())
+
+
+typed("Physics", physics_from, physics_merge, physics_to)
+
+
+# ------------------------------------------------------------- AIProgram (.baiprog)
+AIDEF = [("name", "Name", "str", True), ("class_name", "ClassName", "s32", False),
+         ("group_name", "GroupName", "str", True)]
+
+
+def aiprog_from(data):
+    pio = A.ParameterIO.from_binary(data)
+    demos = need(obj(pio, "DemoAIActionIdx"), "AI program missing DemoAIActionIdx")
+    ais = need(lst(pio, "AI"), "AI program missing AI list")
+    actions = need(lst(pio, "Action"), "AI program missing Action list")
+    behaviors = need(lst(pio, "Behavior"), "AI program missing Behavior list")
+    queries = need(lst(pio, "Query"), "AI program missing Query list")
+    ai_l = [l for _, l in ais.lists.items()]
+    act_l = [l for _, l in actions.lists.items()]
+    beh_l = [l for _, l in behaviors.lists.items()]
+    q_l = [l for _, l in queries.lists.items()]
+    act_off = len(ai_l)
+    beh_off = act_off + len(act_l)
+    q_off = beh_off + len(beh_l)
+
+    def locate(index):
+        if index >= q_off:
+            return q_l[index - q_off], "Query"
+        if index >= beh_off:
+            return beh_l[index - beh_off], "Behavior"
+        if index >= act_off:
+            return act_l[index - act_off], "Action"
+        return ai_l[index], "AI"
+
+    def entry(l, category, depth=0):
+        if depth > 64:
+            raise ValueError("AI program tree too deep")
+        d = paramdata_from(need(obj(l, "Def"), "AI entry missing Def object"), AIDEF)
+        si = obj(l, "SInst")
+        bi = obj(l, "BehaviorIdx")
+        ci = obj(l, "ChildIdx")
+        children = None
+        if ci is not None:
+            children = {}
+            for k, v in ci.params.items():
+                cl, cat = locate(int(v.v))
+                children[k.hash] = entry(cl, cat, depth + 1)
+        return {"category": category, "def": d,
+                "params": pobj_to_cbor(si) if si is not None else None,
+                "behaviors": {k.hash: int(v.v) for k, v in bi.params.items()} if bi is not None else None,
+                "children": children}
+
+    out_demos = {}
+    for k, v in demos.params.items():
+        l, cat = locate(int(v.v))
+        out_demos[k.hash] = entry(l, cat)
+    child_idx = set()
+    for l in ai_l:
+        ci = obj(l, "ChildIdx")
+        if ci is not None:
+            child_idx.update(int(v.v) for _, v in ci.params.items())
+    roots = {}
+    for i, (l, cat) in enumerate([(l, "AI") for l in ai_l] + [(l, "Action") for l in act_l]):
+        if i in child_idx:
+            continue
+        e = entry(l, cat)
+        roots[need(e["def"].get("name"), "AI entry def missing name")] = e
+    return {"demos": out_demos,
+            "behaviors": {i: entry(l, "Behavior") for i, l in enumerate(beh_l)},
+            "queries": {i: entry(l, "Query") for i, l in enumerate(q_l)},
+            "roots": roots}
+
+
+def aientry_merge(b, d):
+    out = {"category": b["category"], "def": d["def"]}
+    out["params"] = opt_merge(b.get("params"), d.get("params"), merge_pobj_cbor)
+    out["behaviors"] = opt_merge(b.get("behaviors"), d.get("behaviors"), lambda x, y: {**x, **y})
+    out["children"] = opt_merge(b.get("children"), d.get("children"), _entries_merge)
+    return out
+
+
+def _entries_merge(b, d):
+    out = {}
+    for k in list(dict.fromkeys(list(b) + list(d))):
+        out[k] = aientry_merge(b[k], d[k]) if k in b and k in d else (b[k] if k in b else d[k])
+    return out
+
+
+def aiprog_merge(b, d):
+    # UKMM collects these keys through HashSets (arbitrary order); keep base order
+    return {"demos": _entries_merge(b["demos"], d["demos"]),
+            "behaviors": dict(sorted(_entries_merge(ilist(b["behaviors"]), ilist(d["behaviors"])).items())),
+            "queries": dict(sorted(_entries_merge(ilist(b["queries"]), ilist(d["queries"])).items())),
+            "roots": _entries_merge(b["roots"], d["roots"])}
+
+
+def _def_key(d):
+    return (d.get("name"), d["class_name"], d.get("group_name"))
+
+
+def aiprog_to(m):
+    def count_ais(e, checked):
+        k = _def_key(e["def"])
+        own = 0 if k in checked else 1
+        checked.add(k)
+        if e["category"] != "AI":
+            return 0
+        return own + sum(count_ais(c, checked) for c in (e.get("children") or {}).values())
+
+    checked = set()
+    action_offset = sum(count_ais(r, checked) for r in m["roots"].values())
+    ais, actions, behaviors, queries = [], [], [], []
+    finished = {}
+
+    def to_list(e):
+        k = _def_key(e["def"])
+        cat = e["category"]
+        if cat in ("AI", "Action") and k in finished:
+            return finished[k]
+        pl = A.ParameterList()
+        add_obj(pl, "Def", paramdata_to(e["def"], AIDEF))
+        if e.get("children") is not None:
+            add_obj(pl, "ChildIdx", A.ParameterObject())
+        if e.get("behaviors") is not None:
+            bo = A.ParameterObject()
+            for h, idx in e["behaviors"].items():
+                bo.params[A.Name(int(h))] = P(oead.S32(int(idx)))
+            add_obj(pl, "BehaviorIdx", bo)
+        if e.get("params") is not None:
+            set_obj(pl, "SInst", e["params"])
+        if cat == "AI":
+            index = len(ais)
+            ais.append(pl)
+            if e.get("children") is not None:
+                kids = sorted(e["children"].items(),
+                              key=lambda kv: not str(kv[1]["def"].get("name") or "").startswith("Demo_"))
+                co = A.ParameterObject()
+                for h, child in kids:
+                    co.params[A.Name(int(h))] = P(oead.S32(to_list(child)))
+                pl.objects[A.Name("ChildIdx")] = co
+            finished[k] = index
+            return index
+        if cat == "Action":
+            index = action_offset + len(actions)
+            actions.append(pl)
+            finished[k] = index
+            return index
+        (behaviors if cat == "Behavior" else queries).append(pl)
+        return 0
+
+    for e in ilist(m["behaviors"]).values():
+        to_list(e)
+    for e in ilist(m["queries"]).values():
+        to_list(e)
+    for e in m["roots"].values():
+        to_list(e)
+    demo_items = [(int(h), to_list(e)) for h, e in m["demos"].items()]
+    nt = A.get_default_name_table()
+
+    def demo_name(h):
+        try:
+            return nt.get_name(h, 0, H("DemoAIActionIdx"))
+        except Exception:
+            return None
+    demo_items.sort(key=lambda hv: (demo_name(hv[0]) is not None, demo_name(hv[0]) or ""))
+    pio = new_pio()
+    do = A.ParameterObject()
+    for h, idx in demo_items:
+        do.params[A.Name(h)] = P(oead.S32(idx))
+    add_obj(pio, "DemoAIActionIdx", do)
+    for name, items, prefix in (("AI", ais, "AI"), ("Action", actions, "Action"),
+                                ("Behavior", behaviors, "Behavior"), ("Query", queries, "Query")):
+        l = A.ParameterList()
+        for i, pl in enumerate(items):
+            add_list(l, f"{prefix}_{i}", pl)
+        add_list(pio, name, l)
+    return bytes(pio.to_binary())
+
+
+typed("AIProgram", aiprog_from, aiprog_merge, aiprog_to)
