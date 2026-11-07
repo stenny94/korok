@@ -2269,3 +2269,258 @@ def cookdata_build(data, vanilla, canon):
 
 
 BUILDERS["CookData"] = cookdata_build
+
+
+# ------------------------------------------------------------- MainStatic (Map/MainField/Static.smubin)
+def _to_f32(x: float) -> float:
+    import struct
+    try:
+        return struct.unpack("<f", struct.pack("<f", x))[0]
+    except OverflowError:
+        return float("inf") if x > 0 else float("-inf")
+
+
+def rust_f32(x: float) -> str:
+    """Rust's Display for f32: shortest digits that round-trip, never an exponent."""
+    import struct
+    from decimal import Decimal
+    x = _to_f32(x)
+    if x != x:
+        return "NaN"
+    if x in (float("inf"), float("-inf")):
+        return "inf" if x > 0 else "-inf"
+    for p in range(1, 18):
+        s = f"{x:.{p}g}"
+        if struct.unpack("<f", struct.pack("<f", float(s)))[0] == x:
+            break
+    out = format(Decimal(s), "f")
+    if "." in out:
+        out = out.rstrip("0").rstrip(".")
+    if out in ("-0", "0") and str(x).startswith("-"):
+        return "-0"
+    return out
+
+
+def _f32mul(a: float, b: float) -> float:
+    return _to_f32(a * b)
+
+
+_VEC_ORDER = {"Y": 0, "X": 1, "Z": 2, "W": 3}
+
+
+def _vec_id(vec: dict) -> str:
+    return "".join(rust_f32(_f32mul(v[0], 100000.0)) for _, v in vec.items() if not v[1])
+
+
+# field kinds: vec (DeleteMap<char, f32>), str, enum (string), i32, u32, f32, bool
+MS_TYPES = {
+    "dlc_restart_pos": ("DLCRestartPos", [("scale", "Scale", "vec"), ("translate", "Translate", "vec"),
+                                          ("unique_name", "UniqueName", "str")],
+                        ["unique_name"], lambda e: _vec_id(e["translate"]) + (e.get("unique_name") or "")),
+    "collab_anchor": ("FldObj_DLC_ShootingStarCollaborationAnchor", [
+        ("collabo_shooting_star_direction", "CollaboShootingStarDirection", "i32"),
+        ("collabo_shooting_star_end_hour", "CollaboShootingStarEndHour", "i32"),
+        ("collabo_shooting_star_start_hour", "CollaboShootingStarStartHour", "i32"),
+        ("translate", "Translate", "vec"),
+        ("collabo_ssfallout_flag_name", "collaboSSFalloutFlagName", "str"),
+        ("collabo_ssopen_flag_name", "collaboSSOpenFlagName", "str"),
+        ("collabo_ssquest_flag", "collaboSSQuestFlag", "str")],
+        ["collabo_shooting_star_direction", "collabo_shooting_star_end_hour", "collabo_shooting_star_start_hour",
+         "collabo_ssfallout_flag_name", "collabo_ssopen_flag_name", "collabo_ssquest_flag"],
+        lambda e: _vec_id(e["translate"]) + (e.get("collabo_ssopen_flag_name") or "")),
+    "korok_location": ("KorokLocation", [
+        ("flag", "Flag", "str"), ("hidden_korok_body_color", "HiddenKorokBodyColor", "i32"),
+        ("hidden_korok_left_plant_type", "HiddenKorokLeftPlantType", "i32"),
+        ("hidden_korok_mask_type", "HiddenKorokMaskType", "i32"),
+        ("hidden_korok_right_plant_type", "HiddenKorokRightPlantType", "i32"),
+        ("is_appear_check", "IsAppearCheck", "bool"), ("is_hidden_korok_lift_appear", "IsHiddenKorokLiftAppear", "bool"),
+        ("is_invisible_korok", "IsInvisibleKorok", "bool"),
+        ("korok_event_start_wait_frame", "KorokEventStartWaitFrame", "i32"),
+        ("placement_type", "PlacementType", "enum"), ("rail_move_speed", "RailMoveSpeed", "f32"),
+        ("territory_area", "TerritoryArea", "f32"), ("translate", "Translate", "vec")],
+        ["flag", "hidden_korok_body_color", "hidden_korok_left_plant_type", "hidden_korok_mask_type",
+         "hidden_korok_right_plant_type", "is_appear_check", "is_hidden_korok_lift_appear", "is_invisible_korok",
+         "korok_event_start_wait_frame", "placement_type", "rail_move_speed", "territory_area"],
+        lambda e: _vec_id(e["translate"]) + (e.get("flag") or "")),
+    "location_marker": ("LocationMarker", [
+        ("icon", "Icon", "enum"), ("message_id", "MessageID", "str"), ("priority", "Priority", "i32"),
+        ("save_flag", "SaveFlag", "str"), ("translate", "Translate", "vec"),
+        ("warp_dest_map_name", "WarpDestMapName", "mapunit"), ("warp_dest_pos_name", "WarpDestPosName", "str")],
+        ["priority", "save_flag"], lambda e: _vec_id(e["translate"]) + (e.get("message_id") or "")),
+    "location_pointer": ("LocationPointer", [
+        ("location_priority", "LocationPriority", "i32"), ("message_id", "MessageID", "str"),
+        ("pointer_type", "PointerType", "i32"), ("save_flag", "SaveFlag", "str"), ("show_level", "ShowLevel", "i32"),
+        ("translate", "Translate", "vec")],
+        ["location_priority", "pointer_type", "show_level"],
+        lambda e: _vec_id(e["translate"]) + (e.get("message_id") or "")),
+    "non_auto_gen_area": ("NonAutoGenArea", [
+        ("enable_auto_flower", "EnableAutoFlower", "bool"), ("rotate_y", "RotateY", "f32"),
+        ("scale", "Scale", "vec"), ("shape", "Shape", "enum"), ("translate", "Translate", "vec")],
+        ["enable_auto_flower", "rotate_y", "shape"],
+        lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"]) + rust_f32(e.get("rotate_y") or 0.0)
+        + (e.get("shape") or "Sphere")),
+    "non_auto_placement": ("NonAutoPlacement", [
+        ("non_auto_placement_animal", "NonAutoPlacementAnimal", "bool"),
+        ("non_auto_placement_bird", "NonAutoPlacementBird", "bool"),
+        ("non_auto_placement_enemy", "NonAutoPlacementEnemy", "bool"),
+        ("non_auto_placement_fish", "NonAutoPlacementFish", "bool"),
+        ("non_auto_placement_insect", "NonAutoPlacementInsect", "bool"),
+        ("non_auto_placement_material", "NonAutoPlacementMaterial", "bool"),
+        ("non_enemy_search_player", "NonEnemySearchPlayer", "bool"), ("not_use_for_stats", "NotUseForStats", "bool"),
+        ("rotate_y", "RotateY", "f32"), ("scale", "Scale", "vec"), ("shape", "Shape", "enum"),
+        ("translate", "Translate", "vec")],
+        ["non_auto_placement_animal", "non_auto_placement_bird", "non_auto_placement_enemy",
+         "non_auto_placement_fish", "non_auto_placement_insect", "non_auto_placement_material",
+         "non_enemy_search_player", "rotate_y", "shape"],
+        lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"]) + rust_f32(e.get("rotate_y") or 0.0)
+        + (e.get("shape") or "Sphere")),
+    "road_npc_rest_station": ("RoadNpcRestStation", [
+        ("rest_horse_left", "RestHorseLeft", "bool"), ("rest_only_npc", "RestOnlyNpc", "bool"),
+        ("rest_with_horse", "RestWithHorse", "bool"), ("rotate_y", "RotateY", "f32"),
+        ("translate", "Translate", "vec")],
+        ["rest_horse_left", "rest_only_npc", "rest_with_horse", "rotate_y"], lambda e: _vec_id(e["translate"])),
+    "start_pos": ("StartPos", [
+        ("map", "Map", "mapunit"), ("player_state", "PlayerState", "enum"), ("pos_name", "PosName", "str"),
+        ("rotate", "Rotate", "vec"), ("translate", "Translate", "vec")],
+        ["map"], lambda e: _vec_id(e["translate"]) + (e.get("pos_name") or "")),
+    "static_grudge_location": ("StaticGrudgeLocation", [
+        ("eyeball_hash_id", "EyeballHashId", "u32"), ("translate", "Translate", "vec")],
+        [], lambda e: _vec_id(e["translate"]) + str(e.get("eyeball_hash_id") or 0)),
+    "target_pos_marker": ("TargetPosMarker", [
+        ("rotate", "Rotate", "vec"), ("translate", "Translate", "vec"), ("unique_name", "UniqueName", "str")],
+        ["unique_name"], lambda e: _vec_id(e["translate"]) + (e.get("unique_name") or "")),
+    "tera_water_disable": ("TeraWaterDisable", [("scale", "Scale", "vec"), ("translate", "Translate", "vec")],
+                           [], lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"])),
+    "terrain_hide_center_tag": ("TerrainHideCenterTag", [("scale", "Scale", "vec"), ("translate", "Translate", "vec")],
+                                [], lambda e: _vec_id(e["translate"]) + _vec_id(e["scale"])),
+}
+
+
+def _mapunit_str(v):
+    """MapUnit / MapAndUnit serde -> the game's string ('A-1', 'MainField/A-1', 'CDungeon')."""
+    if isinstance(v, str):
+        return v
+    if "unit" in v:                                   # MapAndUnit {map, unit}
+        return f"{v['map']}/{_mapunit_str(v['unit'])}"
+    col = int(v["col"])
+    return str(v["row"]) if col == 0xFFFFFFFF else f"{v['row']}-{col}"
+
+
+def _ms_entry_from_byml(h, fields):
+    e = {}
+    for field, key, kind in fields:
+        if key not in h:
+            e[field] = {} if kind == "vec" else None
+            continue
+        v = h[key]
+        if kind == "vec":
+            # roead parses BYML hashes into a hash map; for these keys it iterates Y, X, Z, and
+            # UKMM's entry IDs are built in that order
+            items = sorted(((str(k)[0], _f(x)) for k, x in v.items()), key=lambda kv: _VEC_ORDER.get(kv[0], 9))
+            e[field] = {k: [x, False] for k, x in items}
+        elif kind in ("str", "enum", "mapunit"):
+            e[field] = str(v)
+        elif kind == "f32":
+            e[field] = _f(v)
+        elif kind == "bool":
+            e[field] = bool(v)
+        elif kind == "u32":
+            e[field] = _u32(v.v if hasattr(v, "v") else v)
+        else:
+            e[field] = _ival(v)
+    return e
+
+
+def _ms_entry_norm(d, fields):
+    e = {}
+    for field, _, kind in fields:
+        v = d.get(field)
+        if kind == "vec":                              # serde char keys arrive as code points
+            e[field] = {(chr(k) if isinstance(k, int) else str(k)): [float(x[0]), bool(x[1])]
+                        for k, x in (v or {}).items()}
+        elif v is None:
+            e[field] = None
+        elif kind == "mapunit":
+            e[field] = _mapunit_str(v)
+        elif kind == "f32":
+            e[field] = float(v)
+        elif kind in ("i32",):
+            e[field] = _i32(v)
+        elif kind == "u32":
+            e[field] = _u32(v)
+        elif kind == "bool":
+            e[field] = bool(v)
+        else:
+            e[field] = str(v)
+    return e
+
+
+def _ms_entry_merge(b, d, fields):
+    out = {}
+    for field, _, kind in fields:
+        if kind == "vec":
+            out[field] = dmap_merge(b.get(field) or {}, d.get(field) or {})
+        else:
+            out[field] = d.get(field) if d.get(field) is not None else b.get(field)
+    return out
+
+
+def _ms_complete(e, fields, required):
+    if any(e.get(r) is None for r in required):
+        return False
+    return all(all(k in "XYZ" for k, v in e[f].items() if not v[1]) for f, _, kind in fields if kind == "vec")
+
+
+def _ms_entry_to(e, fields):
+    h = oead.byml.Hash()
+    for field, key, kind in fields:
+        v = e.get(field)
+        if kind == "vec":
+            h[key] = oead.byml.Hash({k: oead.F32(x[0]) for k, x in v.items() if not x[1]})
+        elif v is None:
+            continue
+        elif kind == "f32":
+            h[key] = oead.F32(v)
+        elif kind == "i32":
+            h[key] = oead.S32(v)
+        elif kind == "u32":
+            h[key] = oead.U32(v)
+        elif kind == "bool":
+            h[key] = bool(v)
+        else:
+            h[key] = str(v)
+    return h
+
+
+def mainstatic_build(data, vanilla, canon):
+    base = oead.byml.from_binary(vanilla) if vanilla is not None else None
+    out = oead.byml.Hash()
+    for field, (key, fields, required, idf) in MS_TYPES.items():
+        dsec = data.get(field)
+        diff = None if dsec is None else {str(k): [_ms_entry_norm(v[0], fields), bool(v[1])] for k, v in dsec.items()}
+        if base is not None and key in base:
+            bsec = {}
+            for h in base[key]:
+                e = _ms_entry_from_byml(h, fields)
+                bsec[str(H(idf(e)))] = [e, False]
+        elif base is not None and field != "dlc_restart_pos":
+            raise ValueError(f"MainField static missing {key}")
+        else:
+            bsec = None
+        if field == "dlc_restart_pos" and bsec is None and diff is None:
+            continue
+        if bsec is None:
+            model = {k: v for k, v in (diff or {}).items() if not v[1]}
+        elif diff is None:
+            model = bsec
+        else:
+            model = deep_merge(bsec, diff, lambda b, d, f=fields: _ms_entry_merge(b, d, f))
+        out[key] = oead.byml.Array([_ms_entry_to(e, fields) for e, dl in model.values()
+                                    if not dl and _ms_complete(e, fields, required)])
+    return byml_to_binary(out)
+
+
+BUILDERS["MainStatic"] = mainstatic_build
+
+
+BUILDERS["FontArchive"] = layout_build          # same structure and merge as LayoutArchive
