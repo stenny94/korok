@@ -1249,3 +1249,277 @@ def aiprog_to(m):
 
 
 typed("AIProgram", aiprog_from, aiprog_merge, aiprog_to)
+
+
+# ------------------------------------------------------------- BYML-based resources
+from korok_ukmm_native import byml_from_cbor as _bc  # noqa: E402
+
+
+def _byml_shallow(b, d):
+    """Byml as Mergeable: shallow merge of hashes (oead values)."""
+    if isinstance(b, oead.byml.Hash) and isinstance(d, oead.byml.Hash):
+        return merge_byml_shallow(b, d)
+    if d is None and isinstance(b, oead.byml.Hash):
+        return b
+    raise ValueError("Can only shallow merge BYML hashes")
+
+
+def deep_merge(base: dict, diff: dict, merge_value, sort=False) -> dict:
+    """DeleteMap::deep_merge where values are already Python/oead objects."""
+    keys = list(dict.fromkeys([k for k, v in base.items() if not v[1]] + list(diff)))
+    out = {}
+    for k in keys:
+        b, d = base.get(k), diff.get(k)
+        if b is not None and d is not None:
+            out[k] = [merge_value(b[0], d[0]), bool(d[1])]
+        else:
+            out[k] = list(d if d is not None else b)
+    out = {k: v for k, v in out.items() if not v[1]}
+    return dict(sorted(out.items())) if sort else out
+
+
+def _byml_dmap(d: dict, key=lambda k: k) -> dict:
+    """CBOR {key: [Byml, deleted]} -> {key: [oead value, deleted]}"""
+    return {key(k): [_bc(v[0]), bool(v[1])] for k, v in d.items()}
+
+
+def _hash_byml(h: int):
+    return oead.U32(h) if h > 0x7FFFFFFF else oead.S32(h)
+
+
+# ------------------------------------------------------------- ActorInfo.product.sbyml
+def actorinfo_build(data, vanilla, canon):
+    diff = _byml_dmap(data, int)
+    if vanilla is None:
+        model = {k: v for k, v in sorted(diff.items()) if not v[1]}
+    else:
+        root = oead.byml.from_binary(vanilla)
+        base = {}
+        for a in need(root.get("Actors"), "Actor info missing Actors"):
+            base[H(str(a["name"]))] = [a, False]
+        model = deep_merge(dict(sorted(base.items())), diff, _byml_shallow, sort=True)
+    actors = oead.byml.Array([v[0] for v in model.values()])
+    hashes = oead.byml.Array([_hash_byml(k) for k in model])
+    return byml_to_binary(oead.byml.Hash({"Actors": actors, "Hashes": hashes}))
+
+
+BUILDERS["ActorInfo"] = actorinfo_build
+
+
+# ------------------------------------------------------------- GameDataPack (GameData/gamedata.ssarc)
+GAMEDATA_FIELDS = ["bool_array_data", "bool_data", "f32_array_data", "f32_data", "revival_bool_data",
+                   "revival_s32_data", "s32_array_data", "s32_data", "string32_data", "string64_array_data",
+                   "string64_data", "string256_array_data", "string256_data", "vector2f_array_data",
+                   "vector2f_data", "vector3f_array_data", "vector3f_data", "vector4f_data"]
+# (serde field, BYML key, kind, optional) - #[derive(BymlData)] FlagData
+FLAGDATA = [("category", "Category", "i32", True), ("data_name", "DataName", "str", False),
+            ("delete_rev", "DeleteRev", "i32", False), ("hash_value", "HashValue", "i32", False),
+            ("init_value", "InitValue", "byml", False), ("is_event_associated", "IsEventAssociated", "bool", False),
+            ("is_one_trigger", "IsOneTrigger", "bool", False), ("is_program_readable", "IsProgramReadable", "bool", False),
+            ("is_program_writable", "IsProgramWritable", "bool", False), ("is_save", "IsSave", "bool", False),
+            ("max_value", "MaxValue", "byml", False), ("min_value", "MinValue", "byml", False),
+            ("reset_type", "ResetType", "i32", False)]
+GAMEDATA_STAGES = ("MainField", "AocField", "CDungeon", "MainFieldDungeon")
+
+
+def _i32(v) -> int:
+    v = int(v)
+    return v - (1 << 32) if v >= (1 << 31) else v
+
+
+def bymldata_from_byml(h, fields):
+    """#[derive(BymlData)] TryFrom<&Byml>: an oead Hash -> normalized oead Hash."""
+    out = oead.byml.Hash()
+    for _, key, kind, optional in fields:
+        if key not in h:
+            if optional:
+                continue
+            raise ValueError(f"missing {key}")
+        v = h[key]
+        if kind == "i32":
+            v = oead.S32(_i32(v))
+        elif kind == "bool":
+            v = bool(v)
+        elif kind == "str":
+            v = str(v)
+        out[key] = v
+    return out
+
+
+def bymldata_from_cbor(d, fields):
+    """A serde struct with BymlData fields -> oead Hash."""
+    out = oead.byml.Hash()
+    for field, key, kind, optional in fields:
+        v = d.get(field)
+        if v is None and optional:
+            continue
+        if kind == "i32":
+            v = oead.S32(_i32(v))
+        elif kind == "bool":
+            v = bool(v)
+        elif kind == "str":
+            v = str(v)
+        elif kind == "byml":
+            v = _bc(v)
+        out[key] = v
+    return out
+
+
+def _gd_extract(sarc, field):
+    data_type = "string_data" if field == "string32_data" else field.replace("revival_", "", 1)
+    flags = {}
+    i = 0
+    while True:
+        f = sarc.get_file(f"/{field}_{i}.bgdata") or sarc.get_file(f"{field}_{i}.bgdata")
+        if f is None:
+            break
+        h = oead.byml.from_binary(bytes(f.data))
+        for item in (h.get(data_type) or []):
+            flags[str(item["DataName"])] = [bymldata_from_byml(item, FLAGDATA), False]
+        i += 1
+    return {"data_type": data_type, "flags": flags}
+
+
+def gamedata_from(data):
+    sarc = oead.Sarc(data)
+    names = [f.name.lstrip("/") for f in sarc.get_files()]
+    if any(n.startswith("revival") for n in names):
+        return {f: _gd_extract(sarc, f) for f in GAMEDATA_FIELDS}
+    # BCML-style pack (no revival_ files): sort bool/s32 flags into the revival tables
+    out = {f: _gd_extract(sarc, f) for f in GAMEDATA_FIELDS}
+    rb, b, rs, s, s32 = {}, {}, {}, {}, {}
+    for f in sarc.get_files():
+        n = f.name.lstrip("/")
+        h = oead.byml.from_binary(bytes(f.data))
+        for prefix, key, plain, revival in (("bool_data", "bool_data", b, rb), ("s32_data", "s32_data", s, rs),
+                                            ("string_data", "string_data", s32, None)):
+            if n.startswith(prefix):
+                for item in (h.get(key) or []):
+                    name = str(item["DataName"])
+                    flag = [bymldata_from_byml(item, FLAGDATA), False]
+                    first = name.split("_")[0]
+                    if revival is not None and first in GAMEDATA_STAGES and \
+                            (prefix != "bool_data" or "HiddenKorok" not in name):
+                        revival[name] = flag
+                    else:
+                        plain[name] = flag
+    out["bool_data"] = {"data_type": "bool_data", "flags": b}
+    out["revival_bool_data"] = {"data_type": "bool_data", "flags": rb}
+    out["s32_data"] = {"data_type": "s32_data", "flags": s}
+    out["revival_s32_data"] = {"data_type": "s32_data", "flags": rs}
+    out["string32_data"] = {"data_type": "string_data", "flags": s32}
+    return out
+
+
+def _gd_diff_norm(d):
+    return {"data_type": d["data_type"],
+            "flags": {k: [bymldata_from_cbor(v[0], FLAGDATA) if isinstance(v[0], dict) else v[0], bool(v[1])]
+                      for k, v in d["flags"].items()}}
+
+
+def gamedata_build(data, vanilla, canon):
+    diff = {f: _gd_diff_norm(data[f]) for f in GAMEDATA_FIELDS if f in data}
+    if vanilla is None:
+        model = {f: {"data_type": v["data_type"], "flags": {k: x for k, x in v["flags"].items() if not x[1]}}
+                 for f, v in diff.items()}
+    else:
+        base = gamedata_from(vanilla)
+        model = {}
+        for f in GAMEDATA_FIELDS:
+            b = base[f]
+            if f in diff:
+                model[f] = {"data_type": b["data_type"], "flags": dmap_merge(b["flags"], diff[f]["flags"])}
+            else:
+                model[f] = b
+    w = oead.SarcWriter(endian=oead.Endianness.Big, mode=oead.SarcWriter.Mode.Legacy)
+    w.set_min_alignment(4)
+    for f in GAMEDATA_FIELDS:
+        if f not in model:
+            continue
+        flags = [v[0] for v in model[f]["flags"].values() if not v[1]]
+        for i in range((len(flags) + 4095) // 4096):
+            chunk = oead.byml.Array(flags[i * 4096:(i + 1) * 4096])
+            w.files[f"/{f}_{i}.bgdata"] = byml_to_binary(oead.byml.Hash({model[f]["data_type"]: chunk}))
+    return bytes(w.write()[1])
+
+
+BUILDERS["GameDataPack"] = gamedata_build
+
+
+# ------------------------------------------------------------- SaveDataPack (GameData/savedataformat.ssarc)
+SAVE_HEADER = [("is_common", "IsCommon", "bool", False),
+               ("is_common_at_same_account", "IsCommonAtSameAccount", "bool", False),
+               ("is_save_secure_code", "IsSaveSecureCode", "bool", False),
+               ("file_name", "file_name", "str", False)]
+SAVE_FILES = ("game_data.sav", "caption.sav", "option.sav")
+
+
+def _sv_flags_merge(base: dict, diff: dict) -> dict:
+    """SortedDeleteSet<Flag> merge; flags compare by hash, base keeps its name."""
+    keys = dict(base)
+    dels = {}
+    for h, (name, d) in diff.items():
+        if h not in keys:
+            keys[h] = name
+        dels[h] = d
+    return {h: keys[h] for h in sorted(keys) if not dels.get(h, False)}
+
+
+def savedata_from(data):
+    sarc = oead.Sarc(data)
+    out = {}
+    for f in sarc.get_files():
+        if not f.name.endswith(".bgsvdata"):
+            continue
+        fl = oead.byml.from_binary(bytes(f.data))["file_list"]
+        hdr = {k: (bool(fl[0][n]) if kind == "bool" else str(fl[0][n])) for k, n, kind, _ in SAVE_HEADER}
+        flags = {_i32(x["HashValue"]): str(x["DataName"]) for x in fl[1]}
+        name = hdr["file_name"]
+        if name in out:
+            out[name]["flags"] = _sv_flags_merge(out[name]["flags"], {h: (n, False) for h, n in flags.items()})
+        else:
+            out[name] = {"header": hdr, "flags": dict(sorted(flags.items()))}
+    return out
+
+
+def _sv_diff_flags(cbor_flags) -> dict:
+    """CBOR SortedDeleteSet<Flag>: {(map name/hash): deleted} -> {hash: (name, deleted)}"""
+    out = {}
+    for k, d in cbor_flags.items():
+        out[_i32(k["hash"])] = (str(k["name"]), bool(d))
+    return out
+
+
+def savedata_build(data, vanilla, canon):
+    base = savedata_from(vanilla) if vanilla is not None else {}
+    model = {}
+    for key in SAVE_FILES:
+        b = base.get(key) or {"header": None, "flags": {}}
+        d = data.get(key) or {"header": None, "flags": {}}
+        hdr = b["header"] or d.get("header")
+        flags = _sv_flags_merge(b["flags"], _sv_diff_flags(d.get("flags") or {}))
+        if hdr is not None:
+            model[key] = {"header": hdr, "flags": flags}
+    w = oead.SarcWriter(endian=oead.Endianness.Big)
+    w.set_min_alignment(4)
+    count = 0
+    for key in SAVE_FILES:
+        m = model.get(key)
+        if m is None:
+            continue
+        flags = list(m["flags"].items())
+        n = (len(flags) + 8191) // 8192
+        for i in range(n):
+            arr = oead.byml.Array([oead.byml.Hash({"DataName": nm, "HashValue": oead.S32(h)})
+                                   for h, nm in flags[i * 8192:(i + 1) * 8192]])
+            doc = oead.byml.Hash({
+                "file_list": oead.byml.Array([bymldata_from_cbor(m["header"], SAVE_HEADER), arr]),
+                "save_info": oead.byml.Array([oead.byml.Hash({"directory_num": oead.S32(8),
+                                                              "is_build_machine": True,
+                                                              "revision": oead.S32(18203)})])})
+            w.files[f"/saveformat_{count + i}.bgsvdata"] = byml_to_binary(doc)
+        count += n
+    return bytes(w.write()[1])
+
+
+BUILDERS["SaveDataPack"] = savedata_build
