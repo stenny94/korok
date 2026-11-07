@@ -20,7 +20,7 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   the game files from your Cemu game files (ported from UKMM, checked against UKMM's own output).
   Not ported yet: MainField static/location markers, lazy traverse lists, cooking data, level
   sensor, status effects, tips, shop game data info, sound bars lists, fonts, layouts, animation
-  sequences (.bas), and install options. If a mod uses one of those, Korok converts it with your
+  sequences (.bas). Mods with install options show a window to pick them. If a mod uses one of those formats, Korok converts it with your
   UKMM install instead when it can find one (UKMM must be set up once for Wii U), or imports the
   mod disabled and tells you which parts are missing.
 - Archives with several option folders (hair styles, colours, ...) are imported as one main
