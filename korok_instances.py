@@ -165,10 +165,10 @@ class InstanceManager:
         return uuid.uuid4().hex[:10]
 
     def create(self, name: str, source: str = "current", playlist: str = None, notes: str = "") -> str:
-        """source: 'current' (copy live save), 'empty' (new game), or an instance id (duplicate)."""
+        """source: 'current' (copy live save), 'empty' (new game), or a save slot id (duplicate)."""
         name = name.strip()
         if not name:
-            raise InstanceError("Give the instance a name.")
+            raise InstanceError("Give the save slot a name.")
         if any(i["name"].lower() == name.lower() for i in self.data["instances"].values()):
             raise InstanceError(f'An instance called "{name}" already exists.')
         iid = self._new_id()
@@ -232,7 +232,7 @@ class InstanceManager:
 
     # ------------------------------------------------------- switching ---
     def sync_back(self):
-        """Copy the live save into the active instance (keeps your progress)."""
+        """Copy the live save into the active save slot (keeps your progress)."""
         a = self.active()
         if not a:
             return False
@@ -243,9 +243,9 @@ class InstanceManager:
         return True
 
     def switch(self, iid, apply_playlist=True):
-        """Make `iid` the active instance. Returns a short human summary."""
+        """Make `iid` the active save slot. Returns a short human summary."""
         if iid not in self.data["instances"]:
-            raise InstanceError("That instance no longer exists.")
+            raise InstanceError("That save slot no longer exists.")
         self._require_cemu_closed()
         notes = []
         live = self.live_save_dir()
@@ -283,7 +283,7 @@ class InstanceManager:
     def launch(self, with_game=True):
         exe = self.cemu_exe()
         if not exe or not pathlib.Path(exe).exists():
-            raise InstanceError("Set the path to Cemu.exe first (Instances tab).")
+            raise InstanceError("Set the path to Cemu.exe first (Save Manager tab).")
         args = [exe]
         game = self.data.get("game_path", "")
         if game and with_game:

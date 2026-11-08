@@ -45,8 +45,8 @@ def display_name_for(file_path: str) -> str:
     return (p.name if p.is_dir() else p.stem).replace("_", " ")
 
 
-class UkmmOptionsDialog(QDialog):
-    """Lets the user pick a UKMM mod's install options (defaults preselected)."""
+class ModOptionsDialog(QDialog):
+    """Lets the user pick a mod's install options (UKMM package or BNP; defaults preselected)."""
 
     def __init__(self, mod_name: str, groups: list, parent=None):
         super().__init__(parent)
@@ -191,7 +191,7 @@ class KorokUI(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QLabel("Playlists  (click one to switch)"))
+        left_layout.addWidget(QLabel("Profiles  (click one to switch)"))
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemClicked.connect(self.on_tree_clicked)
@@ -208,7 +208,7 @@ class KorokUI(QMainWindow):
             pl_buttons.addWidget(b)
         left_layout.addLayout(pl_buttons)
 
-        self.auto_apply_chk = QCheckBox("Apply automatically when switching playlists")
+        self.auto_apply_chk = QCheckBox("Apply automatically when switching profiles")
         self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
         self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
         left_layout.addWidget(self.auto_apply_chk)
@@ -253,36 +253,60 @@ class KorokUI(QMainWindow):
         splitter.setSizes([260, 700])
         layout.addWidget(splitter, stretch=1)
 
-        # --- Install queue + progress (hidden until used) ---
+        self.pending_label = QLabel(
+            "Changes not applied yet - press <b>Apply to Cemu</b> on the Import tab.")
+        self.pending_label.setStyleSheet("color: #b36b00;")
+        self.pending_label.setVisible(False)
+        layout.addWidget(self.pending_label)
+
+        # ================= Import tab: import, apply, rebuild =================
+        imp = QVBoxLayout()
+        intro = QLabel(
+            "Import mods into your library (.bnp, .zip, .7z, UKMM packages, or an unpacked folder). "
+            "New mods are added to the active profile; choose which mods are on and their order on "
+            "the Mods tab. <b>Apply to Cemu</b> builds the Korok Mods graphic pack from the active "
+            "profile.")
+        intro.setWordWrap(True)
+        imp.addWidget(intro)
+
+        import_row = QHBoxLayout()
+        self.import_btn = QPushButton("Import Mods (.bnp / .zip / .7z)...")
+        self.import_btn.clicked.connect(self.import_mod_files)
+        self.import_dir_btn = QPushButton("Import Folder...")
+        self.import_dir_btn.setToolTip(
+            "Import an already-unpacked mod: a folder containing 'content' and/or 'aoc'\n"
+            "(for example the folder UKMM deploys to). The folder itself is never changed.")
+        self.import_dir_btn.clicked.connect(self.import_mod_folder)
+        import_row.addWidget(self.import_btn, stretch=2)
+        import_row.addWidget(self.import_dir_btn, stretch=1)
+        imp.addLayout(import_row)
+
+        # install queue + progress (hidden until used)
         self.queue_label = QLabel("Install queue:")
         self.queue_list = QListWidget()
-        self.queue_list.setMaximumHeight(110)
         self.progress_label = QLabel("")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         for w in (self.queue_label, self.queue_list, self.progress_label, self.progress_bar):
             w.setVisible(False)
-            layout.addWidget(w)
+            imp.addWidget(w)
+        imp.addStretch(1)
 
-        # --- Action Buttons ---
-        btn_layout = QHBoxLayout()
-        self.import_btn = QPushButton("Import Mods (.bnp / .zip)...")
-        self.import_btn.clicked.connect(self.import_mod_files)
-        self.import_dir_btn = QPushButton("Import Folder...")
-        self.import_dir_btn.setToolTip(
-            "Import an already-unpacked graphic pack: a folder containing 'content' and/or 'aoc'\n"
-            "(for example the folder UKMM deploys to). The folder itself is never changed.")
-        self.import_dir_btn.clicked.connect(self.import_mod_folder)
+        self.import_profile_label = QLabel()
+        imp.addWidget(self.import_profile_label)
+        apply_row = QHBoxLayout()
         self.apply_btn = QPushButton(self.NORMAL_TEXT)
+        self.apply_btn.setMinimumHeight(40)
         self.apply_btn.clicked.connect(self.apply_mods)
         self.force_btn = QPushButton("Force full rebuild")
         self.force_btn.setToolTip("Rebuild everything even if nothing changed (ignores the 'up to date' check).")
+        self.force_btn.setMinimumHeight(40)
         self.force_btn.clicked.connect(self.force_rebuild)
-        btn_layout.addWidget(self.import_btn)
-        btn_layout.addWidget(self.import_dir_btn)
-        btn_layout.addWidget(self.apply_btn, stretch=2)
-        btn_layout.addWidget(self.force_btn)
-        layout.addLayout(btn_layout)
+        apply_row.addWidget(self.apply_btn, stretch=3)
+        apply_row.addWidget(self.force_btn, stretch=1)
+        imp.addLayout(apply_row)
+        import_page = QWidget()
+        import_page.setLayout(imp)
 
         mods_page = QWidget()
         mods_page.setLayout(layout)
@@ -290,7 +314,8 @@ class KorokUI(QMainWindow):
         self.instances_tab.busy.connect(self.on_instance_busy)
         self.main_tabs = QTabWidget()
         self.main_tabs.addTab(mods_page, "Mods")
-        self.main_tabs.addTab(self.instances_tab, "Instances")
+        self.main_tabs.addTab(import_page, "Import")
+        self.main_tabs.addTab(self.instances_tab, "Save Manager")
         self.main_tabs.addTab(self.editor_tab, "Save Editor")
         self.main_tabs.currentChanged.connect(self.on_tab_changed)
         outer.addWidget(self.main_tabs, stretch=1)
@@ -306,18 +331,19 @@ class KorokUI(QMainWindow):
         if a:
             d = self.instance_mgr.info(a)
             pl = d.get("playlist")
-            self.instance_label.setText(f"Active instance: {d['name']}" + (f"   (playlist: {pl})" if pl else ""))
+            self.instance_label.setText(f"Active save slot: {d['name']}" + (f"   (profile: {pl})" if pl else ""))
         else:
-            self.instance_label.setText("Active instance: none")
+            self.instance_label.setText("Active save slot: none")
 
     def on_instance_busy(self, busy: bool, text: str):
         self.main_tabs.setEnabled(not busy)
         self.statusBar().showMessage(text if busy else "", 0 if busy else 1)
 
     def on_tab_changed(self, idx):
-        if idx == 1:
+        w = self.main_tabs.widget(idx)
+        if w is self.instances_tab:
             self.instances_tab.refresh()
-        elif idx == 2:
+        elif w is self.editor_tab:
             self.editor_tab.rescan()
 
     def on_path_edited(self):
@@ -353,6 +379,11 @@ class KorokUI(QMainWindow):
         except Exception:
             pending = True
         self.apply_btn.setText(self.PENDING_TEXT if pending else self.NORMAL_TEXT)
+        self.pending_label.setVisible(bool(pending))
+        self.import_profile_label.setText(f"Active profile: <b>{self.engine.active_profile}</b>  "
+                                          f"({len(self.engine.profile_mods())} mod(s) on)")
+        if hasattr(self, "main_tabs"):
+            self.main_tabs.setTabText(1, "Import  \u25cf" if pending else "Import")
 
     def refresh_tree(self):
         self.tree.blockSignals(True)
@@ -380,7 +411,7 @@ class KorokUI(QMainWindow):
 
     def refresh_mods(self, select: str = ""):
         ordered = self.engine.ordered_mods()
-        self.active_label.setText(f"Playlist: <b>{self.engine.active_profile}</b>")
+        self.active_label.setText(f"Profile: <b>{self.engine.active_profile}</b>")
         self.table.blockSignals(True)
         self.table.setRowCount(len(ordered))
         select_row = -1
@@ -413,7 +444,7 @@ class KorokUI(QMainWindow):
             self.table.setItem(row, 3, note_item)
 
             remove_btn = QPushButton("Delete")
-            remove_btn.setToolTip("Delete this mod from the library (removes it from every playlist).")
+            remove_btn.setToolTip("Delete this mod from the library (removes it from every profile).")
             remove_btn.clicked.connect(lambda _checked, m=mod_name: self.delete_mod(m))
             self.table.setCellWidget(row, 4, remove_btn)
 
@@ -439,18 +470,18 @@ class KorokUI(QMainWindow):
             self.refresh_mods(select=mod)
 
     def _ask_name(self, title: str, default: str = ""):
-        text, ok = QInputDialog.getText(self, title, "Playlist name:", text=default)
+        text, ok = QInputDialog.getText(self, title, "Profile name:", text=default)
         return text.strip() if ok and text.strip() else None
 
     def new_playlist(self):
         if self.worker is not None:
             return
-        name = self._ask_name("New playlist")
+        name = self._ask_name("New profile")
         if not name:
             return
         copy = QMessageBox.question(
-            self, "New playlist",
-            "Start with the mods of the current playlist?\n(No = start empty)",
+            self, "New profile",
+            "Start with the mods of the current profile?\n(No = start empty)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes
         try:
@@ -458,21 +489,21 @@ class KorokUI(QMainWindow):
             self.engine.set_active_profile(name)
             self.instance_mgr.follow_playlist(name)
         except ValueError as e:
-            QMessageBox.warning(self, "Playlist", str(e))
+            QMessageBox.warning(self, "Profile", str(e))
         self.refresh_all()
 
     def rename_playlist(self):
         if self.worker is not None:
             return
         old = self.engine.active_profile
-        name = self._ask_name("Rename playlist", old)
+        name = self._ask_name("Rename profile", old)
         if not name or name == old:
             return
         try:
             self.engine.rename_profile(old, name)
             self.instance_mgr.rename_playlist_refs(old, name)
         except ValueError as e:
-            QMessageBox.warning(self, "Playlist", str(e))
+            QMessageBox.warning(self, "Profile", str(e))
         self.refresh_all()
 
     def delete_playlist(self):
@@ -480,15 +511,15 @@ class KorokUI(QMainWindow):
             return
         name = self.engine.active_profile
         if QMessageBox.question(
-            self, "Delete playlist",
-            f"Delete the playlist '{name}'?\n(The mods themselves stay in your library.)",
+            self, "Delete profile",
+            f"Delete the profile '{name}'?\n(The mods themselves stay in your library.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
             return
         try:
             self.engine.delete_profile(name)
         except ValueError as e:
-            QMessageBox.warning(self, "Playlist", str(e))
+            QMessageBox.warning(self, "Profile", str(e))
         self.refresh_all()
 
     # ---------------------------------------------------- mod list
@@ -523,7 +554,7 @@ class KorokUI(QMainWindow):
             return
         if QMessageBox.question(
             self, "Delete mod",
-            f"Delete '{mod_name}' from your library?\nIt will be removed from every playlist.",
+            f"Delete '{mod_name}' from your library?\nIt will be removed from every profile.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -549,6 +580,7 @@ class KorokUI(QMainWindow):
         """items: [("file", path) | ("url", url)]; empty = just rebuild."""
         if self.worker is not None:
             return
+        self.main_tabs.setCurrentIndex(1)         # the Import tab shows the progress
         self.queue_list.clear()
         has_queue = bool(items)
         for kind, value in items:
@@ -649,13 +681,13 @@ class KorokUI(QMainWindow):
                     return
             keep = []
             for p in file_paths:
-                if self.engine.is_ukmm_archive(p):
-                    groups = self.engine.ukmm_option_groups(p)
+                if True:
+                    groups = self.engine.mod_option_groups(p)
                     if groups:
-                        dlg = UkmmOptionsDialog(display_name_for(p), groups, self)
+                        dlg = ModOptionsDialog(display_name_for(p), groups, self)
                         if dlg.exec() != QDialog.DialogCode.Accepted:
                             continue          # cancelled: don't import this one
-                        self.engine.ukmm_option_choices[str(pathlib.Path(p))] = dlg.chosen()
+                        self.engine.option_choices[str(pathlib.Path(p))] = dlg.chosen()
                 keep.append(p)
             if keep:
                 self.start_job([("file", p) for p in keep])
@@ -683,6 +715,12 @@ class KorokUI(QMainWindow):
         if folder:
             if self.engine.is_ukmm_archive(folder) and not self.ensure_ukmm():
                 return
+            groups = self.engine.mod_option_groups(folder)
+            if groups:
+                dlg = ModOptionsDialog(display_name_for(folder), groups, self)
+                if dlg.exec() != QDialog.DialogCode.Accepted:
+                    return
+                self.engine.option_choices[str(pathlib.Path(folder))] = dlg.chosen()
             self.start_job([("file", folder)])
 
     def closeEvent(self, event):
