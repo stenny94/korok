@@ -92,6 +92,7 @@ class KorokEngine:
 
         self.last_build_skipped = False
         self.last_imported_name = ""
+        self.import_notes = []          # information about the last import (not warnings)
         self.option_choices = {}        # {archive path: [option folders]} picked in the UI
         self.ukmm_option_choices = self.option_choices
         self.state = self._load_state()
@@ -302,6 +303,8 @@ default = true
         """Stages a mod. Returns a list of warning strings.
         _option_of: internal - set when importing an extra option folder of a mod,
         so it gets its own name and is imported disabled."""
+        if not _option_of:
+            self.import_notes = []
         archive_path = pathlib.Path(file_path)
         safe_name = self._safe_name(mod_display_name)
         staged_mod_path = self.staging_dir / safe_name
@@ -353,7 +356,8 @@ default = true
                                if opts_dir not in r.resolve().parents and r.resolve() != opts_dir]
                 if groups or bnp_options:
                     names = {o["path"]: o["name"] for g in groups for o in g["options"]}
-                    warnings.append(f"Options used: " + (", ".join(names.get(o, o) for o in bnp_options) or "none") + ".")
+                    self.import_notes.append(
+                        "Options used: " + (", ".join(names.get(o, o) for o in bnp_options) or "none") + ".")
 
             # Prefer the mod's own name (BNP info.json / graphic pack rules.txt)
             nice = None if _option_of else self._embedded_name(root)
@@ -629,8 +633,8 @@ default = true
                            f"built: {conv.built}\nunsupported: {dict(conv.unsupported)}\n"
                            f"problems: {conv.problems}\n")
             if not gaps and not conv.problems:
-                warnings.append(
-                    f"'{name}' is a UKMM package; Korok rebuilt its {conv.built} game file(s) itself.{chosen} "
+                self.import_notes.append(
+                    f"UKMM package: Korok rebuilt its {conv.built} game file(s) itself.{chosen} "
                     "The result is already merged with the game files, so if another mod changes the "
                     "same files, whichever is lower in the load order wins.")
                 return out, False
@@ -1115,11 +1119,15 @@ default = true
                 except Exception:
                     pass
         # Mods with no RSTB data at all (plain graphic packs): find the game files they
-        # change so the vanilla entries, now too small, can be removed.
+        # change so the vanilla entries, now too small, can be removed. A mod that ships
+        # its own table (e.g. a UKMM deploy) already has proper sizes for its files -
+        # removing those makes the game guess, which can hang the loading screen.
         changed_by_mod = {}
         for mod_name in getattr(self, "_build_mods", self.profile_mods()):
             mod_dir = self.staging_dir / mod_name
             has_table = any(mn == mod_name for mn, _ in shipped_tables)
+            if has_table:
+                continue
             if mod_dir.is_dir() and not (mod_dir / RSTB_LOG_NAME).exists():
                 try:
                     names = self._changed_resource_names(mod_dir)
