@@ -15,20 +15,21 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 
 ## Features
 
-- Import mods from `.zip`, `.7z`, `.bnp` or a plain folder
-- Import UKMM mod packages without UKMM: Korok reads UKMM's package format itself and rebuilds
-  the game files from your Cemu game files. This is a port of UKMM's own code (all of its file
-  types), checked file by file against UKMM's output. Mods with install options show a window to
-  pick them. Needs `cbor2` and `zstandard` (in requirements.txt).
-- Archives with several option folders (hair styles, colours, ...) are imported as one main
-  mod plus a disabled mod per option, so you can pick the ones you want
+- Import mods from `.bnp`, `.zip`, `.7z` or an unpacked folder
+- **UKMM packages without UKMM:** Korok reads UKMM's package format itself and rebuilds the game
+  files from your Cemu game files. This is a port of UKMM's own code (all of its file types),
+  checked file by file against UKMM's output.
+- **Install options:** mods that come with options (UKMM packages and BNPs) show a window where you
+  pick them, with the mod's defaults already selected
+- Archives with several mod folders but no option list (hair styles, colours, ...) are imported as
+  one main mod plus a switched-off mod per folder, so you can tick the ones you want
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
   drop tables, shops, quests, map units, dialogue, event info and more
-- Load order and mod playlists
-- **Save manager (instances):** each instance has its own save file and, optionally, its own
-  mod playlist. Switching swaps the save Cemu sees and applies the playlist for you. Korok backs
-  up your live save before every switch and can restore from those backups.
-- **Save editor:** view and change rupees, inventory items, and individual game flags in a save
+- **Profiles:** named sets of mods with their own on/off choices and load order
+- **Save Manager:** keep several save slots, each with its own save file and, optionally, its own
+  profile. Switching swaps the save Cemu sees and applies the profile for you. Korok backs up your
+  live save before every switch and can restore from those backups.
+- **Save Editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write
 - Launch Cemu and BotW straight from Korok
 - 1-click install links (**WIP**)
@@ -76,13 +77,37 @@ From the Korok folder:
 python main.py
 ```
 
-On first start, point Korok at your Cemu folder if it asks. Then use **Import** to
-add a mod, enable it, and let Korok build the graphic pack. Start Cemu and make sure the
-**KorokMods** graphic pack is enabled.
+On first start, point Korok at your Cemu folder if it asks. Then:
+
+1. **Import** tab: import your mods. Each one is added to your library and to the active profile.
+2. **Mods** tab: tick the mods you want and set their order (lower in the list wins when two mods
+   change the same file).
+3. **Import** tab: press **Apply to Cemu**. Korok builds the **Korok Mods** graphic pack.
+4. Start Cemu and make sure the **Korok Mods** graphic pack is ticked (Options → Graphic packs).
+
+## The tabs
+
+| Tab | What it's for |
+| --- | --- |
+| **Mods** | Your profiles (left) and the mods in the active profile (right): turn mods on and off, change the load order, delete mods from your library. |
+| **Import** | Import mods, **Apply to Cemu** (rebuild the Korok Mods pack from the active profile) and **Force full rebuild** (rebuild even if nothing changed). A dot on the tab means there are changes that haven't been applied yet. |
+| **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile each slot uses. |
+| **Save Editor** | Edit rupees, items and game flags in a save. |
+
+## Terms
+
+- **Library:** every mod you have imported.
+- **Profile:** a named set of mods from your library, with its own on/off choices and load order.
+  (Older versions of Korok called these *playlists*.) Only the active profile is built into the
+  pack.
+- **Save slot:** a save file kept by the Save Manager, optionally tied to a profile. (Older
+  versions called these *instances*.)
+- **Korok Mods:** the single Cemu graphic pack Korok builds. Korok never turns your other graphic
+  packs on or off.
 
 ## Saves
 
-- Close Cemu before switching instances or editing a save.
+- Close Cemu before switching save slots or editing a save.
 - Korok backs up the save before every switch and every edit (in the `korok_backups` folder).
   The save editor has had limited testing against real saves, so keep a copy of your own too.
 
@@ -103,13 +128,15 @@ Mods I have tested with Korok. This is a small list, so a mod not being here doe
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Does not work yet. The game gets stuck on a black loading screen when starting a new save (BNP version), UKMM version is now read by Korok itself (needs retesting) |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | BNP version: the game gets stuck on a black loading screen when starting a new save. UKMM version now imports with Korok's own reader, including its install options (needs retesting in game) |
 
 ## Troubleshooting
 
 - **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py main.py`.
-- **A build fails or the game crashes**: send the log file `korok_merge.log` from the Korok
-  logs folder when asking for help.
+- **A build fails or the game crashes**: send `korok_build.log` and `korok_merge.log` from the
+  Korok `logs` folder when asking for help (and `korok_ukmm.log` for UKMM packages).
+- **`pip install -r requirements.txt` fails on one package**: install the rest by name, e.g.
+  `pip install cbor2 zstandard pymsyt`.
 
 ## Credits
 
@@ -117,14 +144,17 @@ Korok builds on the work of others:
 
 - **[BCML](https://github.com/NiceneNerd/BCML)** by Nicene Nerd (GPL-3.0+). The merge logic for
   BNP mods is ported from BCML's mergers.
-- **[UKMM](https://github.com/NiceneNerd/ukmm)** by Nicene Nerd, for the reference on how the
-  mod formats and deploy layouts work.
+- **[UKMM](https://github.com/NiceneNerd/ukmm)** by Nicene Nerd (GPL-3.0). Korok's UKMM package
+  reader is a port of UKMM's code, and `data/ukmm_zsdic` and `data/ukmm_filemap_wiiu.json.zst`
+  are UKMM's own data files. BNP install options follow BCML's behaviour.
 - **[oead](https://github.com/zeldamods/oead)** by the Zelda Modding community, for reading and
   writing BYML, AAMP, SARC and Yaz0 files.
 - **[rstb](https://github.com/zeldamods/rstb)**, the Resource Size Table format and size formulas.
 - **[msyt](https://github.com/NiceneNerd/msyt)** (via `pymsyt`), for editing game text.
 - **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** for the interface,
-  **[PyYAML](https://pyyaml.org/)** and **[py7zr](https://github.com/miurahr/py7zr)**.
+  **[PyYAML](https://pyyaml.org/)**, **[py7zr](https://github.com/miurahr/py7zr)**,
+  **[cbor2](https://github.com/agronholm/cbor2)** and
+  **[zstandard](https://github.com/indygreg/python-zstandard)**.
 - **[Cemu](https://cemu.info/)** and the BotW modding community.
 
 *The Legend of Zelda: Breath of the Wild* is a trademark of Nintendo. Korok is an unofficial

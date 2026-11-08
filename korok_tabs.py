@@ -1,4 +1,4 @@
-"""Instances tab and Save Editor tab for Korok."""
+"""Save Manager tab and Save Editor tab for Korok."""
 import pathlib
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -62,13 +62,13 @@ class InstancesTab(QWidget):
         lay = QVBoxLayout(self)
 
         intro = QLabel(
-            "An instance is its own save file, optionally with a mod playlist that is applied for you on switch. Switching swaps the save "
+            "A save slot is its own save file, optionally with a mod profile that is applied for you on switch. Switching swaps the save "
             "Cemu sees (your game files stay shared). Close Cemu before switching.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Active", "Instance", "Last played"])
+        self.table.setHorizontalHeaderLabels(["Active", "Save slot", "Last played"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -79,9 +79,9 @@ class InstancesTab(QWidget):
         lay.addWidget(self.table, stretch=1)
 
         row1 = QHBoxLayout()
-        self.switch_btn = QPushButton("Switch instance")
+        self.switch_btn = QPushButton("Switch save slot")
         self.save_btn = QPushButton("Save progress now")
-        self.save_btn.setToolTip("Copy the live Cemu save into the active instance.")
+        self.save_btn.setToolTip("Copy the live Cemu save into the active save slot.")
         for b in (self.switch_btn, self.save_btn):
             row1.addWidget(b)
         lay.addLayout(row1)
@@ -89,7 +89,7 @@ class InstancesTab(QWidget):
         row2 = QHBoxLayout()
         self.new_btn = QPushButton("New...")
         self.ren_btn = QPushButton("Rename...")
-        self.pl_btn = QPushButton("Set playlist...")
+        self.pl_btn = QPushButton("Set profile...")
         self.del_btn = QPushButton("Delete")
         self.bak_btn = QPushButton("Restore backup...")
         for b in (self.new_btn, self.ren_btn, self.pl_btn, self.del_btn, self.bak_btn):
@@ -179,7 +179,7 @@ class InstancesTab(QWidget):
         self.status.setText(text)
 
     def error(self, e):
-        QMessageBox.warning(self, "Instances", str(e))
+        QMessageBox.warning(self, "Save Manager", str(e))
 
     def refresh(self, select=None):
         keep = select or self.selected()
@@ -201,14 +201,14 @@ class InstancesTab(QWidget):
         if act:
             self.say(f'Active instance: "{self.mgr.info(act)["name"]}"   |   Live save: {self.mgr.live_save_dir()}')
         else:
-            self.say(f"No active instance yet.   Live save: {self.mgr.live_save_dir()}")
+            self.say(f"No active save slot yet.   Live save: {self.mgr.live_save_dir()}")
         self.refreshed.emit()
 
     # --- actions
     def need(self):
         iid = self.selected()
         if not iid:
-            QMessageBox.information(self, "Instances", "Select an instance first.")
+            QMessageBox.information(self, "Save Manager", "Select a save slot first.")
         return iid
 
     def switch(self, launch):
@@ -235,9 +235,9 @@ class InstancesTab(QWidget):
             # apply the playlist automatically, then launch
             self._launch_after = launch
             self._msg = msg
-            self.busy.emit(True, "Applying playlist...")
+            self.busy.emit(True, "Applying profile...")
             self.rebuilder = RebuildWorker(self.engine)
-            self.rebuilder.progress.connect(lambda t: self.busy.emit(True, "Applying playlist: " + t))
+            self.rebuilder.progress.connect(lambda t: self.busy.emit(True, "Applying profile: " + t))
             self.rebuilder.done.connect(self.on_rebuilt)
             self.rebuilder.start()
         elif launch:
@@ -248,7 +248,7 @@ class InstancesTab(QWidget):
         self.busy.emit(False, "")
         self.changed.emit()
         if err:
-            self.error(f"Playlist couldn't be applied, so Cemu was not launched:\n{err}")
+            self.error(f"Profile couldn't be applied, so Cemu was not launched:\n{err}")
             return
         self.say(self._msg + "  Pack updated.")
         if self._launch_after:
@@ -278,16 +278,16 @@ class InstancesTab(QWidget):
     def on_cemu_closed(self):
         try:
             if self.mgr.sync_back():
-                self.say("Cemu closed. Progress saved into the active instance.")
+                self.say("Cemu closed. Progress saved into the active save slot.")
         except Exception as e:
             self.say(f"Couldn't save progress back: {e}")
 
     def save_progress(self):
         if not self.mgr.active():
-            QMessageBox.information(self, "Instances", "No active instance. Switch to one first.")
+            QMessageBox.information(self, "Save Manager", "No active save slot. Switch to one first.")
             return
         if self.mgr.sync_back():
-            self.say("Progress saved into the active instance.")
+            self.say("Progress saved into the active save slot.")
         else:
             self.say("Nothing to save (live save folder is empty).")
 
@@ -295,18 +295,18 @@ class InstancesTab(QWidget):
         names = [NO_PLAYLIST] + self.engine.profile_names()
         cur = names.index(current) if current in names else 0
         name, ok = QInputDialog.getItem(
-            self, "Playlist", "Mod playlist for this instance (applied automatically when you switch):",
+            self, "Profile", "Mod profile for this save slot (applied automatically when you switch):",
             names, cur, False)
         if not ok:
             return None
         return "" if name == NO_PLAYLIST else name
 
     def new_instance(self):
-        name, ok = QInputDialog.getText(self, "New instance", "Name:")
+        name, ok = QInputDialog.getText(self, "New save slot", "Name:")
         if not ok or not name.strip():
             return
         src, ok = QInputDialog.getItem(
-            self, "New instance", "Starting save:",
+            self, "New save slot", "Starting save:",
             ["Copy of my current Cemu save", "Brand-new game (empty save)"], 0, False)
         if not ok:
             return
@@ -345,7 +345,7 @@ class InstancesTab(QWidget):
         if not iid:
             return
         n = self.mgr.info(iid)["name"]
-        if QMessageBox.question(self, "Delete instance",
+        if QMessageBox.question(self, "Delete save slot",
                                 f'Delete "{n}" and its stored save? This cannot be undone.') \
                 == QMessageBox.StandardButton.Yes:
             self.mgr.delete(iid)

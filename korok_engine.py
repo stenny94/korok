@@ -92,7 +92,8 @@ class KorokEngine:
 
         self.last_build_skipped = False
         self.last_imported_name = ""
-        self.ukmm_option_choices = {}   # {archive path: [option paths]} picked in the UI
+        self.option_choices = {}        # {archive path: [option folders]} picked in the UI
+        self.ukmm_option_choices = self.option_choices
         self.state = self._load_state()
 
         saved_path = self.load_config_path()
@@ -324,7 +325,7 @@ default = true
                     safe_name = self._safe_name(ukmm_name)
                     staged_mod_path = self.staging_dir / safe_name
                 if ukmm_options is None:
-                    ukmm_options = self.ukmm_option_choices.get(str(archive_path))
+                    ukmm_options = self.option_choices.get(str(archive_path))
                 root, force_disabled = self._convert_ukmm(archive_path, temp_extract, safe_name, warnings,
                                                           ukmm_options)
                 from_dir = True
@@ -338,6 +339,21 @@ default = true
                     "It may be a Switch ('romfs') mod or an unsupported format."
                 )
             extra_roots = [] if _option_of else roots[1:]
+            bnp_options = []          # chosen BNP option folders, in order
+            if not _option_of and (root / "options").is_dir() and (root / "info.json").is_file():
+                groups = self._bnp_groups_from_info(root / "info.json")
+                chosen = self.option_choices.get(str(archive_path))
+                if chosen is None:
+                    chosen = [d for g in groups for d in g["defaults"]]
+                valid = [o["path"] for g in groups for o in g["options"]] or \
+                    [d.name for d in (root / "options").iterdir() if d.is_dir()]
+                bnp_options = [o for o in valid if o in set(chosen) and (root / "options" / o).is_dir()]
+                opts_dir = (root / "options").resolve()
+                extra_roots = [r for r in extra_roots
+                               if opts_dir not in r.resolve().parents and r.resolve() != opts_dir]
+                if groups or bnp_options:
+                    names = {o["path"]: o["name"] for g in groups for o in g["options"]}
+                    warnings.append(f"Options used: " + (", ".join(names.get(o, o) for o in bnp_options) or "none") + ".")
 
             # Prefer the mod's own name (BNP info.json / graphic pack rules.txt)
             nice = None if _option_of else self._embedded_name(root)
@@ -347,15 +363,19 @@ default = true
             self.last_imported_name = safe_name
 
             logs = root / "logs"
+            option_logs = [root / "options" / o / "logs" for o in bnp_options
+                           if (root / "options" / o / "logs").is_dir()]
             needs_merge = []
-            if logs.is_dir():
+            if logs.is_dir() or option_logs:
                 supported = korok_merge.supported_logs()
-                needs_merge = sorted(
-                    f.name for f in logs.iterdir()
+                needs_merge = sorted({
+                    f.name for d in ([logs] if logs.is_dir() else []) + option_logs for f in d.iterdir()
                     if f.name.lower() not in HARMLESS_BNP_LOGS
                     and f.name.lower() not in supported
-                )
-                wanted = [n for n in korok_merge.SUPPORTED_LOGS if (logs / n).exists()]
+                })
+                logs_for_check = logs if logs.is_dir() else option_logs[0]
+                wanted = [n for n in korok_merge.SUPPORTED_LOGS
+                          if any((d / n).exists() for d in [logs_for_check] + option_logs)]
                 if wanted and not korok_merge.available():
                     warnings.append(
                         f"'{safe_name}' needs the 'oead' package to apply its merge logs. "
@@ -397,6 +417,18 @@ default = true
                         (staged_mod_path / MERGE_LOGS_DIR).mkdir(exist_ok=True)
                         shutil.copy2(logs / n, staged_mod_path / MERGE_LOGS_DIR / n)
 
+            # BNP options: like BCML, each chosen option's files go over the main mod's
+            # (archives merged, the option's files winning) and its merge logs apply after
+            for i, opt in enumerate(bnp_options, 1):
+                self._overlay_option(root / "options" / opt, staged_mod_path)
+                ol = root / "options" / opt / "logs"
+                if ol.is_dir():
+                    for n in korok_merge.SUPPORTED_LOGS | {"packs.json"}:
+                        if (ol / n).exists():
+                            dest = staged_mod_path / f"{MERGE_LOGS_DIR}_opt{i:02d}"
+                            dest.mkdir(exist_ok=True)
+                            shutil.copy2(ol / n, dest / n)
+
             self._write_meta(staged_mod_path, {"needs_merge": needs_merge})
             self._known_before = {safe_name} if was_known else set()
             if _option_of and was_known:
@@ -407,6 +439,9 @@ default = true
             self._known_before = set()
 
             entries = self._load_rstb_log(logs)
+            for ol in option_logs:
+                for k, v in self._load_rstb_log(ol).items():
+                    entries[k] = v if v == 0 or k not in entries or entries[k] == 0 else max(entries[k], v)
             if entries:
                 (staged_mod_path / RSTB_LOG_NAME).write_text(json.dumps(entries), encoding="utf-8")
             # No RSTB data at all is handled at build time (_changed_resource_names).
@@ -433,6 +468,124 @@ default = true
             shutil.rmtree(temp_extract, ignore_errors=True)
 
         return warnings
+
+    @staticmethod
+    def _mod_log_dirs(mod_dir: pathlib.Path) -> list:
+        """The mod's merge logs, then those of its chosen BNP options."""
+        out = [mod_dir / MERGE_LOGS_DIR] if (mod_dir / MERGE_LOGS_DIR).is_dir() else []
+        out += sorted(d for d in mod_dir.glob(MERGE_LOGS_DIR + "_opt*") if d.is_dir())
+        return out
+
+    @staticmethod
+    def _bnp_groups_from_info(info_path) -> list:
+        """BCML info.json "options" -> option groups in the same shape as UKMM's:
+        [{name, description, multiple, required, defaults, options: [{name, description, path}]}]"""
+        try:
+            info = json.loads(pathlib.Path(info_path).read_text(encoding="utf-8-sig"))
+        except Exception:
+            return []
+        opts = info.get("options") or {}
+        if not isinstance(opts, dict):
+            return []
+        groups = []
+        multi = [o for o in opts.get("multi") or [] if isinstance(o, dict) and o.get("folder")]
+        if multi:
+            groups.append({"name": "Optional components", "description": "", "multiple": True,
+                           "required": False,
+                           "defaults": [str(o["folder"]) for o in multi if o.get("default")],
+                           "options": [{"name": str(o.get("name") or o["folder"]),
+                                        "description": str(o.get("desc") or ""), "path": str(o["folder"])}
+                                       for o in multi]})
+        for g in opts.get("single") or []:
+            if not isinstance(g, dict):
+                continue
+            items = [o for o in g.get("options") or [] if isinstance(o, dict) and o.get("folder")]
+            if not items:
+                continue
+            defaults = [str(o["folder"]) for o in items if o.get("default")][:1]
+            if not defaults and g.get("required"):
+                defaults = [str(items[0]["folder"])]
+            groups.append({"name": str(g.get("name") or "Options"), "description": str(g.get("desc") or ""),
+                           "multiple": False, "required": bool(g.get("required")), "defaults": defaults,
+                           "options": [{"name": str(o.get("name") or o["folder"]),
+                                        "description": str(o.get("desc") or ""), "path": str(o["folder"])}
+                                       for o in items]})
+        return groups
+
+    @staticmethod
+    def _read_archive_member(path, member: str):
+        """Bytes of one file (by name, anywhere in the archive) from a .zip/.7z/.bnp, or None."""
+        path = pathlib.Path(path)
+        low = member.lower()
+        if path.is_dir():
+            hits = sorted(path.rglob(member), key=lambda p: len(p.parts))
+            return hits[0].read_bytes() if hits else None
+        try:
+            if zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as z:
+                    names = sorted((n for n in z.namelist() if n.rstrip("/").lower().rsplit("/", 1)[-1] == low),
+                                   key=lambda n: n.count("/"))
+                    return z.read(names[0]) if names else None
+            import py7zr
+            with py7zr.SevenZipFile(path, mode="r") as z:
+                names = sorted((n for n in z.getnames() if n.lower().rsplit("/", 1)[-1] == low),
+                               key=lambda n: n.count("/"))
+            if not names:
+                return None
+            tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_member_"))
+            try:
+                with py7zr.SevenZipFile(path, mode="r") as z:
+                    z.extract(path=tmp, targets=[names[0]])
+                f = tmp / names[0]
+                return f.read_bytes() if f.is_file() else None
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        except Exception:
+            return None
+
+    def mod_option_groups(self, path) -> list:
+        """Install options of a mod archive (UKMM package or BNP), [] if none."""
+        if korok_ukmm.is_ukmm_archive(path):
+            return self.ukmm_option_groups(path)
+        raw = self._read_archive_member(path, "info.json")
+        if not raw:
+            return []
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_info_"))
+        try:
+            (tmp / "info.json").write_bytes(raw)
+            return self._bnp_groups_from_info(tmp / "info.json")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def _overlay_option(opt_dir: pathlib.Path, mod_dir: pathlib.Path):
+        """BCML's option install: the option's files replace the mod's; where both have the
+        same archive, the result is the option's archive plus the mod's other files."""
+        oead = korok_merge.oead
+        for game_dir in (c for c in opt_dir.iterdir() if c.is_dir() and c.name.lower() in GAME_DIRS):
+            for f in game_dir.rglob("*"):
+                if not f.is_file():
+                    continue
+                out = mod_dir / game_dir.name.lower() / f.relative_to(game_dir)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                data = f.read_bytes()
+                if out.exists() and oead is not None:
+                    try:
+                        old = out.read_bytes()
+                        unyaz = lambda b: bytes(oead.yaz0.decompress(b)) if b[:4] == b"Yaz0" else b
+                        old_s, new_s = oead.Sarc(unyaz(old)), oead.Sarc(unyaz(data))
+                        w = oead.SarcWriter.from_sarc(new_s)
+                        have = {x.name for x in new_s.get_files()}
+                        for x in old_s.get_files():
+                            if x.name not in have:
+                                w.files[x.name] = bytes(x.data)
+                        merged = bytes(w.write()[1])
+                        data = bytes(oead.yaz0.compress(merged)) if data[:4] == b"Yaz0" else merged
+                    except Exception:
+                        pass                          # not archives: the option's file wins
+                if out.exists():
+                    out.unlink()
+                out.write_bytes(data)
 
     @staticmethod
     def ukmm_option_groups(path) -> list:
@@ -517,7 +670,7 @@ default = true
         (mod_path / META_NAME).write_text(json.dumps(info), encoding="utf-8")
 
     def get_mod_info(self, name: str) -> dict:
-        """'enabled' reflects the ACTIVE playlist."""
+        """'enabled' reflects the ACTIVE profile."""
         info = {"enabled": False, "needs_merge": []}
         f = self.staging_dir / name / META_NAME
         if f.exists():
@@ -566,7 +719,7 @@ default = true
         return state
 
     def _sync_state(self):
-        """Drops mods that no longer exist, appends new ones to every playlist."""
+        """Drops mods that no longer exist, appends new ones to every profile."""
         staged = self.get_staged_mods()
         for prof in self.state["profiles"].values():
             prof["order"] = [m for m in prof.get("order", []) if m in staged]
@@ -580,7 +733,7 @@ default = true
         try:
             STATE_FILE.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
         except Exception as e:
-            print(f"Failed to save playlists: {e}")
+            print(f"Failed to save profiles: {e}")
 
     def _profile(self, name=None) -> dict:
         return self.state["profiles"][name or self.state["active"]]
@@ -593,12 +746,12 @@ default = true
         return list(self.state["profiles"].keys())
 
     def profile_mods(self, name=None) -> list:
-        """Enabled mods of a playlist, in load order."""
+        """Enabled mods of a profile, in load order."""
         prof = self._profile(name)
         return [m for m in prof["order"] if m in prof["enabled"]]
 
     def ordered_mods(self) -> list:
-        """All staged mods in the active playlist's load order."""
+        """All staged mods in the active profile's load order."""
         return list(self._profile()["order"])
 
     def set_active_profile(self, name: str):
@@ -609,9 +762,9 @@ default = true
     def create_profile(self, name: str, copy_from=None) -> str:
         name = name.strip()
         if not name:
-            raise ValueError("Playlist name can't be empty.")
+            raise ValueError("Profile name can't be empty.")
         if name in self.state["profiles"]:
-            raise ValueError(f"A playlist named '{name}' already exists.")
+            raise ValueError(f"A profile named '{name}' already exists.")
         if copy_from and copy_from in self.state["profiles"]:
             src = self.state["profiles"][copy_from]
             self.state["profiles"][name] = {"order": list(src["order"]), "enabled": list(src["enabled"])}
@@ -632,7 +785,7 @@ default = true
 
     def delete_profile(self, name: str):
         if len(self.state["profiles"]) <= 1:
-            raise ValueError("You need at least one playlist.")
+            raise ValueError("You need at least one profile.")
         self.state["profiles"].pop(name, None)
         if self.state["active"] == name:
             self.state["active"] = next(iter(self.state["profiles"]))
@@ -651,7 +804,7 @@ default = true
         return True
 
     def delete_mod(self, name: str):
-        """Removes a mod from the library and every playlist. No rebuild."""
+        """Removes a mod from the library and every profile. No rebuild."""
         mod_path = self.staging_dir / name
         if mod_path.exists():
             shutil.rmtree(mod_path)
@@ -743,7 +896,7 @@ default = true
         return h.hexdigest()
 
     def pending_changes(self) -> bool:
-        """True when the pack on disk doesn't match the active playlist."""
+        """True when the pack on disk doesn't match the active profile."""
         try:
             last = json.loads(LASTBUILD_FILE.read_text(encoding="utf-8"))
         except Exception:
@@ -774,7 +927,7 @@ default = true
                     self.last_build_skipped = True
                     self.last_rstb_report = self.last_merge_report = ""
                     self.last_build_summary = (
-                        "The pack is already up to date with this playlist - nothing was rebuilt.\n"
+                        "The pack is already up to date with this profile - nothing was rebuilt.\n"
                         "In the pack: " + (", ".join(self.profile_mods()) or "nothing"))
                     cb(1.0, "Already up to date")
                     return
@@ -805,7 +958,7 @@ default = true
         self._build_mods = [m.name for m in mods]
         skipped = [n for n in self.get_staged_mods() if n not in enabled_names]
         self.last_build_summary = (
-            f"Playlist: {self.active_profile}\n"
+            f"Profile: {self.active_profile}\n"
             "In the pack: " + (", ".join(m.name for m in mods) or "nothing (pack only has rules.txt)")
         )
         steps = len(mods) + 2  # +1 merge logs, +1 RSTB
@@ -818,7 +971,7 @@ default = true
                     self._merge_directory(sub, target)
 
         # Apply aslist/deepmerge logs from BNPs onto the shipped/vanilla files.
-        log_dirs = [m / MERGE_LOGS_DIR for m in mods if (m / MERGE_LOGS_DIR).is_dir()]
+        log_dirs = [d for m in mods for d in self._mod_log_dirs(m)]
         self.last_merge_report = ""
         pack_report = ""
         if log_dirs and korok_merge.available():
@@ -829,8 +982,7 @@ default = true
                 pass
             # BNPs ship partial packs; rebuild them as vanilla + shipped files
             mod_packs = []
-            for m in mods:
-                pj = m / MERGE_LOGS_DIR / "packs.json"
+            for m, pj in ((m, d / "packs.json") for m in mods for d in self._mod_log_dirs(m)):
                 if pj.exists():
                     try:
                         rels = [v.replace("\\", "/") for v in json.loads(pj.read_text(encoding="utf-8")).values()]
