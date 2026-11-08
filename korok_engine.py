@@ -1119,11 +1119,15 @@ default = true
                 except Exception:
                     pass
         # Mods with no RSTB data at all (plain graphic packs): find the game files they
-        # change so the vanilla entries, now too small, can be removed.
+        # change so the vanilla entries, now too small, can be removed. A mod that ships
+        # its own table (e.g. a UKMM deploy) already has proper sizes for its files -
+        # removing those makes the game guess, which can hang the loading screen.
         changed_by_mod = {}
         for mod_name in getattr(self, "_build_mods", self.profile_mods()):
             mod_dir = self.staging_dir / mod_name
             has_table = any(mn == mod_name for mn, _ in shipped_tables)
+            if has_table:
+                continue
             if mod_dir.is_dir() and not (mod_dir / RSTB_LOG_NAME).exists():
                 try:
                     names = self._changed_resource_names(mod_dir)
