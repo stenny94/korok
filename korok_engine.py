@@ -978,28 +978,41 @@ default = true
         log_dirs = [d for m in mods for d in self._mod_log_dirs(m)]
         self.last_merge_report = ""
         pack_report = ""
-        if log_dirs and korok_merge.available():
-            korok_merge.LOG_FILE = LOGS_DIR / "korok_merge.log"
-            try:
-                korok_merge.LOG_FILE.write_text("", encoding="utf-8")
-            except Exception:
-                pass
-            # BNPs ship partial packs; rebuild them as vanilla + shipped files
-            mod_packs = []
-            for m, pj in ((m, d / "packs.json") for m in mods for d in self._mod_log_dirs(m)):
-                if pj.exists():
-                    try:
-                        rels = [v.replace("\\", "/") for v in json.loads(pj.read_text(encoding="utf-8")).values()]
-                        mod_packs.append((m, rels))
-                    except Exception:
-                        pass
-            if mod_packs:
-                cb(len(mods) / steps, "Merging shipped packs with the vanilla game files...")
-                pn, pprob = korok_merge.merge_partial_packs(
-                    mod_packs, self.graphic_packs_dir, self._vanilla_roots(),
-                    progress=lambda f, t: cb(len(mods) / steps, t))
-                pack_report = f"Packs merged with vanilla: {pn}." + (
-                    "\nPack problems:\n  " + "\n  ".join(pprob[:8]) if pprob else "")
+        korok_merge.LOG_FILE = LOGS_DIR / "korok_merge.log"
+        try:
+            korok_merge.LOG_FILE.write_text("", encoding="utf-8")
+        except Exception:
+            pass
+
+        # Archives (TitleBG.pack, actor packs, ...) that several mods change, or that a BNP
+        # ships as a partial copy, are merged file by file: every mod keeps the files it
+        # changed, and the load order only decides between mods that change the same file.
+        partial = set()
+        for m, pj in ((m, d / "packs.json") for m in mods for d in self._mod_log_dirs(m)):
+            if pj.exists():
+                try:
+                    for v in json.loads(pj.read_text(encoding="utf-8")).values():
+                        partial.add((m.name, v.replace("\\", "/").lstrip("/")))
+                except Exception:
+                    pass
+        providers = {}
+        for m in mods:
+            for game_dir in ("content", "aoc"):
+                top = m / game_dir
+                if not top.is_dir():
+                    continue
+                for f in top.rglob("*"):
+                    if f.is_file() and f.suffix.lower() in korok_merge.SARC_EXTS:
+                        providers.setdefault(f"{game_dir}/{f.relative_to(top).as_posix()}", []).append((m.name, f))
+        jobs = {rel: [f for _, f in found] for rel, found in providers.items()
+                if len(found) > 1 or any((mn, rel) in partial for mn, _ in found)}
+        if jobs:
+            cb(len(mods) / steps, f"Merging {len(jobs)} archive(s) changed by several mods...")
+            pn, pprob = korok_merge.merge_mod_archives(
+                jobs, self.graphic_packs_dir, self._vanilla_roots(),
+                progress=lambda f, t: cb(len(mods) / steps, t))
+            pack_report = f"Archives merged across mods / with vanilla: {pn}." + (
+                "\nArchive problems:\n  " + "\n  ".join(pprob[:8]) if pprob else "")
         self.rstb_delete_names = []
         self.rstb_set_sizes = {}
         if log_dirs and korok_merge.available():

@@ -23,6 +23,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   pick them, with the mod's defaults already selected
 - Archives with several mod folders but no option list (hair styles, colours, ...) are imported as
   one main mod plus a switched-off mod per folder, so you can tick the ones you want
+- **Archives several mods change** (like `TitleBG.pack`, `Bootup.pack` or an actor pack) are merged
+  file by file, so each mod keeps its own changes inside them; the load order only decides when
+  two mods change the same file
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
   drop tables, shops, quests, map units, dialogue, event info and more
 - **Profiles:** named sets of mods with their own on/off choices and load order

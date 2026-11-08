@@ -952,3 +952,123 @@ def _find_vanilla(top: str, vanilla_roots):
         if p.exists():
             return p
     return None
+
+
+# ------------------------------------------------------- archives several mods change
+SARC_EXTS = {".pack", ".sarc", ".ssarc", ".sbactorpack", ".bactorpack", ".sbmodelsh", ".bmodelsh",
+             ".sbeventpack", ".beventpack", ".sstera", ".stera", ".sblarc", ".blarc", ".sstats",
+             ".stats", ".sbgenv", ".bgenv"}
+
+
+def _unyaz(b: bytes) -> bytes:
+    return bytes(oead.yaz0.decompress(b)) if b[:4] == b"Yaz0" else bytes(b)
+
+
+def merge_sarc_versions(vanilla, versions: list, depth: int = 0) -> bytes:
+    """vanilla: the game's archive (bytes, or None if the game has none); versions: the
+    same archive from each mod, in load order (full copies or BNP-style partial ones).
+    Each mod contributes the files it changed from vanilla; when several change the same
+    file, nested archives are merged the same way and otherwise the last mod wins.
+    Compression follows the vanilla file (else the first mod's)."""
+    ref = vanilla if vanilla is not None else versions[0]
+    wrapped = ref[:4] == b"Yaz0"
+    vraw = _unyaz(vanilla) if vanilla is not None else None
+    vs = oead.Sarc(vraw) if vraw is not None else None
+    base = {f.name: bytes(f.data) for f in vs.get_files()} if vs is not None else {}
+    changed = {}                                # name -> [changed versions, in order]
+    raws = [vraw] if vraw is not None else []
+    for v in versions:
+        raw = _unyaz(v)
+        raws.append(raw)
+        for f in oead.Sarc(raw).get_files():
+            d = bytes(f.data)
+            if base.get(f.name) == d:
+                continue                        # this mod didn't change it
+            changed.setdefault(f.name, []).append(d)
+    result = dict(base)
+    for name, vers in changed.items():
+        ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext in SARC_EXTS and depth < 4 and all(_looks_sarc(x) for x in vers) and \
+                (name not in base or _looks_sarc(base[name])):
+            try:
+                result[name] = merge_sarc_versions(base.get(name), vers, depth + 1)
+                continue
+            except Exception as e:
+                _log(f"merge {name}: nested merge failed ({e}); last mod's copy used")
+        result[name] = vers[-1]
+    first = oead.Sarc(raws[0])
+    writer = _new_writer(first, *raws)
+    for name in [n for n in list(writer.files.keys()) if n not in result]:
+        del writer.files[name]
+    for name, d in result.items():
+        writer.files[name] = d
+    out = bytes(writer.write()[1])
+    return bytes(oead.yaz0.compress(out)) if wrapped else out
+
+
+def _merge_versions_worker(conn, vanilla_path, version_paths, out):
+    try:
+        vanilla = pathlib.Path(vanilla_path).read_bytes() if vanilla_path else None
+        data = merge_sarc_versions(vanilla, [pathlib.Path(p).read_bytes() for p in version_paths])
+        outp = pathlib.Path(out)
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        outp.write_bytes(data)
+        conn.send(("ok", len(version_paths), len(data)))
+    except Exception as e:
+        conn.send(("err", f"{type(e).__name__}: {e}", 0))
+    finally:
+        conn.close()
+
+
+def _vanilla_for_staged(rel: str, vanilla_roots):
+    """Staged paths are content/... and aoc/0010/...; the vanilla aoc roots already end in 0010."""
+    if rel.startswith("aoc/0010/"):
+        rel = "aoc/" + rel[len("aoc/0010/"):]
+    return _find_vanilla(rel, vanilla_roots)
+
+
+def merge_mod_archives(jobs: dict, pack_dir: pathlib.Path, vanilla_roots, progress=None):
+    """jobs: {staged relative path: [that file in each mod, in load order]}. Writes the
+    merged archive to pack_dir/<path>. Returns (count, problems)."""
+    if oead is None:
+        return 0, ["oead is not installed (pip install oead); archives several mods change "
+                   "were not merged"]
+    problems, done = [], 0
+
+    def one(rel, paths):
+        out_path = pack_dir / rel
+        van = _vanilla_for_staged(rel, vanilla_roots)
+        key = _cache_key("archives", rel, file_hash(van) if van else "-", *[file_hash(p) for p in paths])
+        if _cache_get(key, out_path):
+            _log(f"archive {rel}: cached")
+            return True, None
+        tmp = out_path.with_name(out_path.name + ".korok_tmp")
+        status, info, size = _run_proc(_merge_versions_worker,
+                                       (str(van) if van else "", [str(p) for p in paths], str(tmp)),
+                                       FILE_TIMEOUT * 6, None)
+        if status == "ok":
+            if out_path.exists():
+                out_path.unlink()                # may be a hard link into a staged mod
+            os.replace(tmp, out_path)
+            _cache_put(key, out_path)
+            _log(f"archive {rel}: merged {len(paths)} mod(s) {size} bytes")
+            return True, None
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        _log(f"archive {rel}: FAILED {info}")
+        return False, f"{rel}: {info}"
+
+    finished = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_worker_count()) as pool:
+        futures = {pool.submit(one, rel, paths): rel for rel, paths in jobs.items()}
+        for fut in concurrent.futures.as_completed(futures):
+            ok, err = fut.result()
+            done += ok
+            if err:
+                problems.append(err)
+            finished += 1
+            if progress:
+                progress(finished / max(len(futures), 1), f"merging {futures[fut]}")
+    return done, problems
