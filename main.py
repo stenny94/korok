@@ -186,17 +186,17 @@ class InstallWorker(QThread):
                     name = self.engine.last_imported_name or name
                 else:
                     name, warnings = self.engine.handle_one_click_url(value)
-                results.append((name, warnings, None))
+                results.append((name, warnings, None, list(self.engine.import_notes)))
                 self.item_status.emit(i, "Done (with warnings)" if warnings else "Done")
             except Exception as e:
-                results.append((label, [], str(e)))
+                results.append((label, [], str(e), []))
                 self.item_status.emit(i, "Failed")
 
         def rebuild_cb(frac: float, text: str):
             self.progress.emit(int(import_share + frac * (100 - import_share)), text)
 
         build_error = ""
-        if n == 0 or any(err is None for _, _, err in results):
+        if n == 0 or any(r[2] is None for r in results):
             try:
                 self.engine.rebuild_consolidated_pack(progress_cb=rebuild_cb, force=self.force)
             except Exception as e:
@@ -713,9 +713,11 @@ class KorokUI(QMainWindow):
             lines.append("Nothing to do.")
         else:
             lines.append("Korok Mods package successfully updated and applied to Cemu!")
-        for name, _, err in failed:
+        for name, _, err, _n in failed:
             lines.append(f"\nFailed: {name}\n  {err}")
-        for name, warnings, _ in ok:
+        for name, warnings, _, notes in ok:
+            for n in notes:
+                lines.append(f"\n{name}: {n}")
             for w in warnings:
                 lines.append(f"\nWarning ({name}): {w}")
         if build_error:
@@ -731,7 +733,7 @@ class KorokUI(QMainWindow):
         has_problems = "problems" in self.engine.last_merge_report
         if build_error or (results and not ok):
             QMessageBox.critical(self, "Error", text)
-        elif failed or any(w for _, w, _ in ok) or has_problems:
+        elif failed or any(w for _, w, _, _n in ok) or has_problems:
             QMessageBox.warning(self, "Finished with warnings", text)
         else:
             QMessageBox.information(self, "Success", text)

@@ -92,6 +92,7 @@ class KorokEngine:
 
         self.last_build_skipped = False
         self.last_imported_name = ""
+        self.import_notes = []          # information about the last import (not warnings)
         self.option_choices = {}        # {archive path: [option folders]} picked in the UI
         self.ukmm_option_choices = self.option_choices
         self.state = self._load_state()
@@ -302,6 +303,8 @@ default = true
         """Stages a mod. Returns a list of warning strings.
         _option_of: internal - set when importing an extra option folder of a mod,
         so it gets its own name and is imported disabled."""
+        if not _option_of:
+            self.import_notes = []
         archive_path = pathlib.Path(file_path)
         safe_name = self._safe_name(mod_display_name)
         staged_mod_path = self.staging_dir / safe_name
@@ -353,7 +356,8 @@ default = true
                                if opts_dir not in r.resolve().parents and r.resolve() != opts_dir]
                 if groups or bnp_options:
                     names = {o["path"]: o["name"] for g in groups for o in g["options"]}
-                    warnings.append(f"Options used: " + (", ".join(names.get(o, o) for o in bnp_options) or "none") + ".")
+                    self.import_notes.append(
+                        "Options used: " + (", ".join(names.get(o, o) for o in bnp_options) or "none") + ".")
 
             # Prefer the mod's own name (BNP info.json / graphic pack rules.txt)
             nice = None if _option_of else self._embedded_name(root)
@@ -629,8 +633,8 @@ default = true
                            f"built: {conv.built}\nunsupported: {dict(conv.unsupported)}\n"
                            f"problems: {conv.problems}\n")
             if not gaps and not conv.problems:
-                warnings.append(
-                    f"'{name}' is a UKMM package; Korok rebuilt its {conv.built} game file(s) itself.{chosen} "
+                self.import_notes.append(
+                    f"UKMM package: Korok rebuilt its {conv.built} game file(s) itself.{chosen} "
                     "The result is already merged with the game files, so if another mod changes the "
                     "same files, whichever is lower in the load order wins.")
                 return out, False
