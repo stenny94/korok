@@ -473,6 +473,63 @@ default = true
 
         return warnings
 
+    def _pack_injections(self, mod_dir: pathlib.Path) -> dict:
+        """{staged pack path: partial archive bytes} holding this mod's loose files whose only
+        place in the game is inside a pack (UKMM places every file by its game path the same
+        way). Uses UKMM's index of the vanilla files; empty without it."""
+        self._injected_count = getattr(self, "_injected_count", 0)
+        oead = korok_merge.oead
+        if oead is None or not korok_ukmm_native.available():
+            return {}
+        try:
+            fmap = korok_ukmm_native._filemap()
+        except Exception:
+            return {}
+        packs = {}          # staged pack rel -> {inner path: bytes | {nested inner: bytes}}
+        for game_dir in ("content", "aoc"):
+            top = mod_dir / game_dir
+            if not top.is_dir():
+                continue
+            for f in top.rglob("*"):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(top).as_posix()
+                canon = korok_ukmm_native.canonicalize(f"{'Aoc/' if game_dir == 'aoc' else ''}{rel}")
+                entry = fmap.get(canon)
+                if not entry:
+                    continue
+                locs = [x for x in entry if x]
+                if not locs or any("//" not in x for x in locs):
+                    continue                    # the game also has it loose: nothing to do
+                if game_dir == "aoc" and entry[0]:
+                    where, prefix = entry[0], "aoc/0010/"
+                else:
+                    where, prefix = (entry[1] or entry[2]), "content/"
+                if not where:
+                    continue
+                parts = where.split("//")
+                pack = prefix + parts[0]
+                node = packs.setdefault(pack, {})
+                for p in parts[1:-1]:
+                    node = node.setdefault(p, {})
+                node[parts[-1]] = f.read_bytes()
+                self._injected_count += 1
+
+        def build(tree):
+            w = oead.SarcWriter(endian=oead.Endianness.Big)
+            for name, v in tree.items():
+                if isinstance(v, dict):
+                    raw = build(v)
+                    v = bytes(oead.yaz0.compress(raw)) if name.rsplit(".", 1)[-1].startswith("s") else raw
+                w.files[name] = v
+            return bytes(w.write()[1])
+        out = {}
+        for pack, tree in packs.items():
+            raw = build(tree)
+            ext = pack.rsplit(".", 1)[-1]
+            out[pack] = bytes(oead.yaz0.compress(raw)) if ext.startswith("s") and ext != "sarc" else raw
+        return out
+
     @staticmethod
     def _mod_log_dirs(mod_dir: pathlib.Path) -> list:
         """The mod's merge logs, then those of its chosen BNP options."""
@@ -996,6 +1053,9 @@ default = true
                 except Exception:
                     pass
         providers = {}
+        self._injected_count = 0
+        inject_dir = self.graphic_packs_dir / ".korok_inject"
+        shutil.rmtree(inject_dir, ignore_errors=True)
         for m in mods:
             for game_dir in ("content", "aoc"):
                 top = m / game_dir
@@ -1004,6 +1064,14 @@ default = true
                 for f in top.rglob("*"):
                     if f.is_file() and f.suffix.lower() in korok_merge.SARC_EXTS:
                         providers.setdefault(f"{game_dir}/{f.relative_to(top).as_posix()}", []).append((m.name, f))
+            # Loose files the game only reads from inside a pack (e.g. Model/Armor_Default.sbfres,
+            # which lives in TitleBG.pack): put them into that pack, like UKMM does.
+            for rel, data in self._pack_injections(m).items():
+                out = inject_dir / m.name / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(data)
+                providers.setdefault(rel, []).append((m.name, out))
+                partial.add((m.name, rel))
         jobs = {rel: [f for _, f in found] for rel, found in providers.items()
                 if len(found) > 1 or any((mn, rel) in partial for mn, _ in found)}
         if jobs:
@@ -1011,7 +1079,9 @@ default = true
             pn, pprob = korok_merge.merge_mod_archives(
                 jobs, self.graphic_packs_dir, self._vanilla_roots(),
                 progress=lambda f, t: cb(len(mods) / steps, t))
+            shutil.rmtree(inject_dir, ignore_errors=True)
             pack_report = f"Archives merged across mods / with vanilla: {pn}." + (
+                f" Loose files moved into packs: {self._injected_count}." if self._injected_count else "") + (
                 "\nArchive problems:\n  " + "\n  ".join(pprob[:8]) if pprob else "")
         self.rstb_delete_names = []
         self.rstb_set_sizes = {}
@@ -1064,6 +1134,8 @@ default = true
             self.last_merge_report = (pack_report + "\n" if pack_report else "") + f"Merge logs: {n} file edit(s) applied." + (
                 "\nMerge problems:\n  " + "\n  ".join(problems[:8]) if problems else "")
 
+        if not self.last_merge_report and pack_report:
+            self.last_merge_report = pack_report
         cb((len(mods) + 1) / steps, "Patching resource size table (RSTB)...")
         try:
             self.last_rstb_report = self._patch_rstb()
