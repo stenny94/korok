@@ -280,12 +280,29 @@ class InstanceManager:
         return " ".join(notes) or "Switched."
 
     # ----------------------------------------------------------- launch --
+    @staticmethod
+    def resolve_game(game: str) -> str:
+        """The game path Cemu's -g wants. A game folder (the one holding code/, content/,
+        meta/) is turned into its code/*.rpx; a folder holding a .wua/.wud/.wux uses that."""
+        p = pathlib.Path(game)
+        if not p.is_dir():
+            return game
+        for d in (p, p.parent):
+            rpx = sorted((d / "code").glob("*.rpx")) if (d / "code").is_dir() else []
+            if rpx:
+                return str(rpx[0])
+        for ext in ("*.wua", "*.wud", "*.wux", "*.rpx"):
+            hits = sorted(p.glob(ext))
+            if hits:
+                return str(hits[0])
+        raise InstanceError(f"No game found in {p} (expected a code/*.rpx, or a .wua/.wud/.wux file).")
+
     def launch(self, with_game=True):
         exe = self.cemu_exe()
         if not exe or not pathlib.Path(exe).exists():
-            raise InstanceError("Set the path to Cemu.exe first (Save Manager tab).")
+            raise InstanceError("Set the path to Cemu.exe first (Settings tab).")
         args = [exe]
         game = self.data.get("game_path", "")
         if game and with_game:
-            args += ["-g", game]
+            args += ["-g", self.resolve_game(game)]
         return subprocess.Popen(args, cwd=str(pathlib.Path(exe).parent))

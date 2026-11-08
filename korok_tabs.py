@@ -96,27 +96,33 @@ class InstancesTab(QWidget):
             row2.addWidget(b)
         lay.addLayout(row2)
 
-        box = QGroupBox("Cemu")
-        self.launch_box = box
-        f = QFormLayout(box)
+        # Cemu.exe / game path widgets: placed on the Settings tab by the main window
         self.exe_edit = QLineEdit(self.mgr.data.get("cemu_exe", "") or self.mgr.cemu_exe())
         self.game_edit = QLineEdit(self.mgr.data.get("game_path", ""))
-        self.game_edit.setPlaceholderText("Optional: path to the BotW game (.rpx / .wua) to start straight in")
-        eb = self.exe_browse = QPushButton("Browse..."); gb = self.game_browse = QPushButton("Browse...")
+        self.game_edit.setPlaceholderText(
+            "Optional: the BotW game (.rpx / .wua) or its folder, so 'Launch BotW' starts straight in")
+        eb = self.exe_browse = QPushButton("Browse...")
+        gb = self.game_browse = QPushButton("File...")
+        gd = self.game_dir_browse = QPushButton("Folder...")
+        gd.setToolTip("Pick the game's folder (the one with code/, content/ and meta/ inside).")
         eb.clicked.connect(lambda: self._browse(self.exe_edit, "Cemu.exe", "Cemu (Cemu.exe);;All (*)"))
         gb.clicked.connect(lambda: self._browse(self.game_edit, "Game", "BotW (*.rpx *.wua *.wud *.wux);;All (*)"))
+        gd.clicked.connect(self._browse_game_dir)
         for e in (self.exe_edit, self.game_edit):
             e.editingFinished.connect(self._store_launch)
-        r = QHBoxLayout(); r.addWidget(self.exe_edit); r.addWidget(eb); f.addRow("Cemu.exe", r)
-        r = QHBoxLayout(); r.addWidget(self.game_edit); r.addWidget(gb); f.addRow("Game", r)
-        self.launch_form = f
+
+        # launch bar: shown above the tabs by the main window
+        box = QWidget()
+        self.launch_box = box
+        r = QHBoxLayout(box)
+        r.setContentsMargins(0, 0, 0, 0)
         self.launch_btn = QPushButton("Launch Cemu")
         self.launch_btn.clicked.connect(lambda: self.launch_cemu(False))
         self.botw_btn = QPushButton("Launch BotW")
-        self.botw_btn.setToolTip("Starts Cemu and loads the game path above straight away.")
+        self.botw_btn.setToolTip("Starts Cemu and loads the game set on the Settings tab straight away.")
         self.botw_btn.clicked.connect(lambda: self.launch_cemu(True))
-        r = QHBoxLayout(); r.addWidget(self.launch_btn, 1); r.addWidget(self.botw_btn, 1)
-        f.addRow(r)
+        r.addWidget(self.launch_btn, 1)
+        r.addWidget(self.botw_btn, 1)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -139,6 +145,17 @@ class InstancesTab(QWidget):
             edit.setText(p)
             self._store_launch()
 
+    def _browse_game_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Game folder", self.game_edit.text())
+        if d:
+            try:
+                ki.InstanceManager.resolve_game(d)
+            except Exception as e:
+                QMessageBox.warning(self, "Game folder", str(e))
+                return
+            self.game_edit.setText(d)
+            self._store_launch()
+
     def autodetect(self):
         """Fill in (and lock) Cemu.exe / the game .rpx when they can be found automatically."""
         exe = self.engine.cemu_dir / "Cemu.exe"
@@ -157,8 +174,10 @@ class InstancesTab(QWidget):
         if rpx:
             self.game_edit.setText(str(rpx))
             self._lock(self.game_edit, self.game_browse, True, "Found in Cemu's mlc01 folder.")
+            self.game_dir_browse.setEnabled(False)
         else:
             self._lock(self.game_edit, self.game_browse, False, "")
+            self.game_dir_browse.setEnabled(True)
         self._store_launch()
 
     @staticmethod
