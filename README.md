@@ -77,7 +77,8 @@ From the Korok folder:
 python main.py
 ```
 
-On first start, point Korok at your Cemu folder if it asks. Then:
+On first start Korok opens the **Settings** tab: set your Cemu folder there (Cemu.exe and the game
+are filled in automatically when Korok finds them). Then:
 
 1. **Import** tab: import your mods. Each one is added to your library and to the active profile.
 2. **Mods** tab: tick the mods you want and set their order (lower in the list wins when two mods
@@ -93,6 +94,9 @@ On first start, point Korok at your Cemu folder if it asks. Then:
 | **Import** | Import mods, **Apply to Cemu** (rebuild the Korok Mods pack from the active profile) and **Force full rebuild** (rebuild even if nothing changed). A dot on the tab means there are changes that haven't been applied yet. |
 | **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile each slot uses. |
 | **Save Editor** | Edit rupees, items and game flags in a save. |
+| **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
+
+**Launch Cemu** and **Launch BotW** sit above the tabs.
 
 ## Terms
 

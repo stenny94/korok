@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFormLayout,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -177,8 +178,6 @@ class KorokUI(QMainWindow):
         self.browse_btn.clicked.connect(self.browse_cemu)
         cemu_layout.addWidget(self.cemu_input)
         cemu_layout.addWidget(self.browse_btn)
-        # Cemu folder lives in the Cemu box, between Cemu.exe and Game
-        self.instances_tab.launch_form.insertRow(0, "Cemu folder", cemu_layout)
 
         self.instance_label = QLabel()
         f = self.instance_label.font(); f.setBold(True); self.instance_label.setFont(f)
@@ -208,10 +207,6 @@ class KorokUI(QMainWindow):
             pl_buttons.addWidget(b)
         left_layout.addLayout(pl_buttons)
 
-        self.auto_apply_chk = QCheckBox("Apply automatically when switching profiles")
-        self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
-        self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
-        left_layout.addWidget(self.auto_apply_chk)
 
         # --- Right: mod table for the active playlist ---
         right = QWidget()
@@ -317,6 +312,8 @@ class KorokUI(QMainWindow):
         self.main_tabs.addTab(import_page, "Import")
         self.main_tabs.addTab(self.instances_tab, "Save Manager")
         self.main_tabs.addTab(self.editor_tab, "Save Editor")
+        self.settings_page = self._build_settings_page(cemu_layout)
+        self.main_tabs.addTab(self.settings_page, "Settings")
         self.main_tabs.currentChanged.connect(self.on_tab_changed)
         outer.addWidget(self.main_tabs, stretch=1)
 
@@ -324,8 +321,41 @@ class KorokUI(QMainWindow):
         self.setCentralWidget(main_widget)
 
         self.refresh_all()
+        if not self.engine.cemu_dir.exists():
+            self.main_tabs.setCurrentWidget(self.settings_page)     # first start: set Cemu up
 
     # ---------------------------------------------------------- settings
+    def _build_settings_page(self, cemu_folder_row) -> QWidget:
+        it = self.instances_tab
+        page = QWidget()
+        lay = QVBoxLayout(page)
+
+        cemu = QGroupBox("Cemu")
+        form = QFormLayout(cemu)
+        form.addRow("Cemu folder", cemu_folder_row)
+        r = QHBoxLayout(); r.addWidget(it.exe_edit); r.addWidget(it.exe_browse)
+        form.addRow("Cemu.exe", r)
+        r = QHBoxLayout(); r.addWidget(it.game_edit); r.addWidget(it.game_browse); r.addWidget(it.game_dir_browse)
+        form.addRow("Game", r)
+        hint = QLabel("The Cemu folder is where Korok writes the Korok Mods graphic pack and finds your "
+                      "game files (mlc01). Cemu.exe and the game are filled in automatically when Korok "
+                      "finds them there; the game can be a file (.rpx / .wua) or the game's folder.")
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        lay.addWidget(cemu)
+
+        mods = QGroupBox("Mods")
+        ml = QVBoxLayout(mods)
+        self.auto_apply_chk = QCheckBox("Apply automatically when switching profiles")
+        self.auto_apply_chk.setToolTip("Rebuild the Korok Mods pack as soon as you pick another profile "
+                                       "on the Mods tab.")
+        self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
+        self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
+        ml.addWidget(self.auto_apply_chk)
+        lay.addWidget(mods)
+        lay.addStretch(1)
+        return page
+
     def update_active_label(self):
         a = self.instance_mgr.active()
         if a:
@@ -656,13 +686,13 @@ class KorokUI(QMainWindow):
     # ---------------------------------------------------- actions
     def apply_mods(self):
         if not self.engine.cemu_dir.exists():
-            QMessageBox.warning(self, "Error", "Please select a valid Cemu directory first.")
+            QMessageBox.warning(self, "Error", "Set your Cemu folder on the Settings tab first.")
             return
         self.start_job([])
 
     def force_rebuild(self):
         if not self.engine.cemu_dir.exists():
-            QMessageBox.warning(self, "Error", "Please select a valid Cemu directory first.")
+            QMessageBox.warning(self, "Error", "Set your Cemu folder on the Settings tab first.")
             return
         self.start_job([], force=True)
 
