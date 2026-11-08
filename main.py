@@ -95,6 +95,67 @@ class ModOptionsDialog(QDialog):
         return [path for path, b in self._widgets if b.isChecked()]
 
 
+class JobWindow(QDialog):
+    """Separate window with the install queue and progress of the running job."""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.resize(560, 360)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        lay = QVBoxLayout(self)
+        self.queue_label = QLabel("Install queue:")
+        self.queue_list = QListWidget()
+        lay.addWidget(self.queue_label)
+        lay.addWidget(self.queue_list, stretch=1)
+        self.progress_label = QLabel("Starting...")
+        self.progress_label.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        lay.addWidget(self.progress_label)
+        lay.addWidget(self.progress_bar)
+        self._running = True
+
+    def set_queue(self, labels: list):
+        self.queue_list.clear()
+        for label in labels:
+            self.queue_list.addItem(f"{label} — Queued")
+        self.queue_label.setVisible(bool(labels))
+        self.queue_list.setVisible(bool(labels))
+        if not labels:
+            self.resize(520, 120)
+
+    def set_status(self, index: int, status: str):
+        item = self.queue_list.item(index)
+        if item:
+            item.setText(f"{item.text().split(' — ')[0]} — {status}")
+            self.queue_list.scrollToItem(item)
+
+    def set_progress(self, percent: int, text: str):
+        if percent < 0:
+            self.progress_bar.setRange(0, 0)          # busy, no known percentage
+        else:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percent)
+        self.progress_label.setText(text)
+
+    def finish(self):
+        self._running = False
+        self.close()
+
+    def closeEvent(self, event):
+        if self._running:
+            event.ignore()                          # can't be closed while working
+        else:
+            event.accept()
+
+    def reject(self):                               # Esc
+        if not self._running:
+            super().reject()
+
+
 class InstallWorker(QThread):
     """Imports every queued item (a file or a 1-click URL), then rebuilds the
     pack ONCE.  With an empty queue it just rebuilds (Apply / Force rebuild)."""
@@ -153,6 +214,8 @@ class KorokUI(QMainWindow):
         super().__init__()
         self.engine = engine
         self.worker = None
+        self.job_window = None
+        self.busy_window = None
         self.init_ui()
 
     # ------------------------------------------------------------------ UI
@@ -276,15 +339,6 @@ class KorokUI(QMainWindow):
         import_row.addWidget(self.import_dir_btn, stretch=1)
         imp.addLayout(import_row)
 
-        # install queue + progress (hidden until used)
-        self.queue_label = QLabel("Install queue:")
-        self.queue_list = QListWidget()
-        self.progress_label = QLabel("")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        for w in (self.queue_label, self.queue_list, self.progress_label, self.progress_bar):
-            w.setVisible(False)
-            imp.addWidget(w)
         imp.addStretch(1)
 
         self.import_profile_label = QLabel()
@@ -367,7 +421,15 @@ class KorokUI(QMainWindow):
 
     def on_instance_busy(self, busy: bool, text: str):
         self.main_tabs.setEnabled(not busy)
-        self.statusBar().showMessage(text if busy else "", 0 if busy else 1)
+        if busy:
+            if getattr(self, "busy_window", None) is None:
+                self.busy_window = JobWindow("Applying profile", self)
+                self.busy_window.set_queue([])
+                self.busy_window.show()
+            self.busy_window.set_progress(-1, text)
+        elif getattr(self, "busy_window", None) is not None:
+            self.busy_window.finish()
+            self.busy_window = None
 
     def on_tab_changed(self, idx):
         w = self.main_tabs.widget(idx)
@@ -603,27 +665,21 @@ class KorokUI(QMainWindow):
                   self.table, self.tree, self.new_pl_btn, self.ren_pl_btn,
                   self.del_pl_btn, self.up_btn, self.down_btn, self.auto_apply_chk):
             w.setEnabled(not busy)
-        self.progress_bar.setVisible(busy or self.progress_bar.isVisible())
-        self.progress_label.setVisible(busy or self.progress_label.isVisible())
 
     def start_job(self, items: list, force: bool = False):
         """items: [("file", path) | ("url", url)]; empty = just rebuild."""
         if self.worker is not None:
             return
-        self.main_tabs.setCurrentIndex(1)         # the Import tab shows the progress
-        self.queue_list.clear()
-        has_queue = bool(items)
-        for kind, value in items:
-            label = display_name_for(value) if kind == "file" else "1-Click download"
-            self.queue_list.addItem(f"{label} — Queued")
-        self.queue_label.setVisible(has_queue)
-        self.queue_list.setVisible(has_queue)
-
-        self.progress_bar.setValue(0)
-        self.progress_label.setText("Starting...")
-        self.progress_bar.setVisible(True)
-        self.progress_label.setVisible(True)
+        if items:
+            title = f"Installing {len(items)} mod(s)"
+        else:
+            title = "Full rebuild" if force else "Applying mods to Cemu"
+        self.job_window = JobWindow(title, self)
+        self.job_window.set_queue([display_name_for(v) if k == "file" else "1-Click download"
+                                   for k, v in items])
+        self.job_window.set_progress(0, "Starting...")
         self.set_busy(True)
+        self.job_window.show()
 
         self.worker = InstallWorker(self.engine, items, force=force)
         self.worker.progress.connect(self.on_progress)
@@ -632,19 +688,19 @@ class KorokUI(QMainWindow):
         self.worker.start()
 
     def on_progress(self, percent: int, text: str):
-        self.progress_bar.setValue(percent)
-        self.progress_label.setText(text)
+        if self.job_window is not None:
+            self.job_window.set_progress(percent, text)
 
     def on_item_status(self, index: int, status: str):
-        item = self.queue_list.item(index)
-        if item:
-            name = item.text().split(" — ")[0]
-            item.setText(f"{name} — {status}")
-            self.queue_list.scrollToItem(item)
+        if self.job_window is not None:
+            self.job_window.set_status(index, status)
 
     def on_job_finished(self, results: list, build_error: str):
         self.worker.wait()
         self.worker = None
+        if self.job_window is not None:
+            self.job_window.finish()
+            self.job_window = None
         self.set_busy(False)
         self.refresh_all()
 
@@ -679,9 +735,6 @@ class KorokUI(QMainWindow):
             QMessageBox.warning(self, "Finished with warnings", text)
         else:
             QMessageBox.information(self, "Success", text)
-
-        self.progress_bar.setVisible(False)
-        self.progress_label.setVisible(False)
 
     # ---------------------------------------------------- actions
     def apply_mods(self):
