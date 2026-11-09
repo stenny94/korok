@@ -85,7 +85,7 @@ def file_hash(path) -> str:
     return h
 
 
-CACHE_VERSION = "align4"   # bump when merge output changes so stale cached results are not reused
+CACHE_VERSION = "archives2"   # bump when merge output changes so stale cached results are not reused
 
 
 def _cache_key(*parts) -> str:
@@ -964,7 +964,7 @@ def _unyaz(b: bytes) -> bytes:
     return bytes(oead.yaz0.decompress(b)) if b[:4] == b"Yaz0" else bytes(b)
 
 
-def merge_sarc_versions(vanilla, versions: list, depth: int = 0) -> bytes:
+def merge_sarc_versions(vanilla, versions: list, depth: int = 0, report: list = None) -> bytes:
     """vanilla: the game's archive (bytes, or None if the game has none); versions: the
     same archive from each mod, in load order (full copies or BNP-style partial ones).
     Each mod contributes the files it changed from vanilla; when several change the same
@@ -986,6 +986,14 @@ def merge_sarc_versions(vanilla, versions: list, depth: int = 0) -> bytes:
                 continue                        # this mod didn't change it
             changed.setdefault(f.name, []).append(d)
     result = dict(base)
+    if report is not None:
+        owners = {}
+        for i, v in enumerate(versions):
+            for f in oead.Sarc(_unyaz(v)).get_files():
+                if base.get(f.name) != bytes(f.data):
+                    owners.setdefault(f.name, []).append(i)
+        for name in sorted(owners):
+            report.append((name, owners[name], name not in base))
     for name, vers in changed.items():
         ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if ext in SARC_EXTS and depth < 4 and all(_looks_sarc(x) for x in vers) and \
@@ -1009,11 +1017,13 @@ def merge_sarc_versions(vanilla, versions: list, depth: int = 0) -> bytes:
 def _merge_versions_worker(conn, vanilla_path, version_paths, out):
     try:
         vanilla = pathlib.Path(vanilla_path).read_bytes() if vanilla_path else None
-        data = merge_sarc_versions(vanilla, [pathlib.Path(p).read_bytes() for p in version_paths])
+        report = []
+        data = merge_sarc_versions(vanilla, [pathlib.Path(p).read_bytes() for p in version_paths],
+                                   report=report)
         outp = pathlib.Path(out)
         outp.parent.mkdir(parents=True, exist_ok=True)
         outp.write_bytes(data)
-        conn.send(("ok", len(version_paths), len(data)))
+        conn.send(("ok", report, len(data)))
     except Exception as e:
         conn.send(("err", f"{type(e).__name__}: {e}", 0))
     finally:
@@ -1027,9 +1037,10 @@ def _vanilla_for_staged(rel: str, vanilla_roots):
     return _find_vanilla(rel, vanilla_roots)
 
 
-def merge_mod_archives(jobs: dict, pack_dir: pathlib.Path, vanilla_roots, progress=None):
+def merge_mod_archives(jobs: dict, pack_dir: pathlib.Path, vanilla_roots, progress=None, labels=None):
     """jobs: {staged relative path: [that file in each mod, in load order]}. Writes the
-    merged archive to pack_dir/<path>. Returns (count, problems)."""
+    merged archive to pack_dir/<path>. labels: {rel: [mod name per version]} for the log.
+    Returns (count, problems)."""
     if oead is None:
         return 0, ["oead is not installed (pip install oead); archives several mods change "
                    "were not merged"]
@@ -1051,7 +1062,16 @@ def merge_mod_archives(jobs: dict, pack_dir: pathlib.Path, vanilla_roots, progre
                 out_path.unlink()                # may be a hard link into a staged mod
             os.replace(tmp, out_path)
             _cache_put(key, out_path)
-            _log(f"archive {rel}: merged {len(paths)} mod(s) {size} bytes")
+            names = (labels or {}).get(rel) or [f"#{i + 1}" for i in range(len(paths))]
+            lines = [f"archive {rel}: merged {len(paths)} version(s) ({', '.join(names)}) {size} bytes"]
+            for name, owners, new_file in info:
+                who = [names[i] for i in owners]
+                flag = " (new)" if new_file else ""
+                is_arc = ("." + name.rsplit(".", 1)[-1].lower()) in SARC_EXTS
+                clash = (f"   <- changed by {len(who)} mods, " + ("merged inside" if is_arc else "LAST WINS")
+                         if len(who) > 1 else "")
+                lines.append(f"    {name}{flag}: {' > '.join(who)}{clash}")
+            _log("\n".join(lines))
             return True, None
         try:
             tmp.unlink()

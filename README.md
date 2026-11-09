@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/korok.png" alt="Korok" width="160"></p>
+
 # korok
 
 > **THIS IS A FULLY VIBE-CODED APPLICATION. USE AT YOUR OWN RISK.**
