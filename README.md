@@ -28,9 +28,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 - **Archives several mods change** (like `TitleBG.pack`, `Bootup.pack` or an actor pack) are merged
   file by file, so each mod keeps its own changes inside them; the load order only decides when
   two mods change the same file
-- **Loose files the game only reads from a pack** (for example player models such as
-  `Model/Armor_Default.sbfres`, which the game loads from `TitleBG.pack`) are put into that pack,
-  as UKMM does, so they actually take effect
+- **Loose files that belong inside a pack the mod also ships** (for example a player model such
+  as `Model/Armor_Default.sbfres` next to the mod's own `TitleBG.pack`) are put into that pack,
+  as UKMM does
 - Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
   drop tables, shops, quests, map units, dialogue, event info and more
 - **Profiles:** named sets of mods with their own on/off choices and load order

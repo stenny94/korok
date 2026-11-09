@@ -475,8 +475,9 @@ default = true
 
     def _pack_injections(self, mod_dir: pathlib.Path) -> dict:
         """{staged pack path: partial archive bytes} holding this mod's loose files whose only
-        place in the game is inside a pack (UKMM places every file by its game path the same
-        way). Uses UKMM's index of the vanilla files; empty without it."""
+        place in the game is inside a pack the mod also ships (UKMM rebuilds such a pack
+        with the mod's loose files the same way). Uses UKMM's index of the vanilla files;
+        empty without it."""
         self._injected_count = getattr(self, "_injected_count", 0)
         oead = korok_merge.oead
         if oead is None or not korok_ukmm_native.available():
@@ -509,6 +510,10 @@ default = true
                     continue
                 parts = where.split("//")
                 pack = prefix + parts[0]
+                if not (mod_dir / pack).is_file():
+                    # like UKMM: only a pack the mod itself ships is rebuilt with its loose
+                    # files; otherwise the game reads the loose file (e.g. Model/*.Tex2)
+                    continue
                 node = packs.setdefault(pack, {})
                 for p in parts[1:-1]:
                     node = node.setdefault(p, {})
