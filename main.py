@@ -406,6 +406,15 @@ class KorokUI(QMainWindow):
         self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
         self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
         ml.addWidget(self.auto_apply_chk)
+        self.move_loose_chk = QCheckBox("Move a mod's loose files into the packs it ships (like UKMM)")
+        self.move_loose_chk.setToolTip(
+            "Some files only take effect inside a pack (e.g. player models in TitleBG.pack). When a mod\n"
+            "ships such a pack and also the files loose, Korok puts them into the pack, as UKMM does.\n"
+            "Turn off to compare if a mod looks wrong; apply again afterwards.")
+        self.move_loose_chk.setChecked(self.engine.move_loose_into_packs)
+        self.move_loose_chk.toggled.connect(lambda on: (self.engine.set_move_loose_into_packs(on),
+                                                        self.update_pending()))
+        ml.addWidget(self.move_loose_chk)
         lay.addWidget(mods)
         lay.addStretch(1)
         return page
@@ -663,7 +672,7 @@ class KorokUI(QMainWindow):
     def set_busy(self, busy: bool):
         for w in (self.import_btn, self.import_dir_btn, self.apply_btn, self.force_btn, self.browse_btn, self.cemu_input,
                   self.table, self.tree, self.new_pl_btn, self.ren_pl_btn,
-                  self.del_pl_btn, self.up_btn, self.down_btn, self.auto_apply_chk):
+                  self.del_pl_btn, self.up_btn, self.down_btn, self.auto_apply_chk, self.move_loose_chk):
             w.setEnabled(not busy)
 
     def start_job(self, items: list, force: bool = False):

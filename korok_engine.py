@@ -132,6 +132,15 @@ class KorokEngine:
     def set_ukmm_exe(self, path: str):
         self._write_config(ukmm_exe=str(path))
 
+    @property
+    def move_loose_into_packs(self) -> bool:
+        """Settings: put loose files that belong inside a pack the mod ships into that pack."""
+        return bool(self.state.get("move_loose_into_packs", True))
+
+    def set_move_loose_into_packs(self, on: bool):
+        self.state["move_loose_into_packs"] = bool(on)
+        self._save_state()
+
     @staticmethod
     def native_ukmm_available() -> bool:
         return korok_ukmm_native.available()
@@ -976,7 +985,7 @@ default = true
         return h.hexdigest()
 
     def build_signature(self) -> str:
-        h = hashlib.sha1(f"{BUILD_VERSION}|{self.graphic_packs_dir}".encode())
+        h = hashlib.sha1(f"{BUILD_VERSION}|{self.graphic_packs_dir}|{self.move_loose_into_packs}".encode())
         for f in (pathlib.Path(__file__), pathlib.Path(korok_merge.__file__), pathlib.Path(korok_mergers.__file__)):
             try:
                 st = f.stat()
@@ -1099,7 +1108,7 @@ default = true
                         providers.setdefault(f"{game_dir}/{f.relative_to(top).as_posix()}", []).append((m.name, f))
             # Loose files the game only reads from inside a pack (e.g. Model/Armor_Default.sbfres,
             # which lives in TitleBG.pack): put them into that pack, like UKMM does.
-            for rel, data in self._pack_injections(m).items():
+            for rel, data in (self._pack_injections(m).items() if self.move_loose_into_packs else []):
                 out = inject_dir / m.name / rel
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(data)
