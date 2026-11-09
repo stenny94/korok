@@ -2,7 +2,7 @@ import pathlib
 import sys
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFormLayout,
@@ -825,7 +825,18 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
 
+    if sys.platform == "win32":
+        # Own taskbar identity, so Windows shows Korok's icon instead of Python's
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Korok.ModManager")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    icon_file = pathlib.Path(__file__).resolve().parent / "assets" / ("korok.ico" if sys.platform == "win32" else "korok.png")
+    if icon_file.exists():
+        app.setWindowIcon(QIcon(str(icon_file)))
 
     register_bcml_protocol()
 

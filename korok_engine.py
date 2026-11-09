@@ -514,6 +514,7 @@ default = true
                     node = node.setdefault(p, {})
                 node[parts[-1]] = f.read_bytes()
                 self._injected_count += 1
+                korok_merge._log(f"loose file {mod_dir.name}: {game_dir}/{rel} -> {pack}//{'//'.join(parts[1:])}")
 
         def build(tree):
             w = oead.SarcWriter(endian=oead.Endianness.Big)
@@ -1074,11 +1075,13 @@ default = true
                 partial.add((m.name, rel))
         jobs = {rel: [f for _, f in found] for rel, found in providers.items()
                 if len(found) > 1 or any((mn, rel) in partial for mn, _ in found)}
+        labels = {rel: [mn + (" (loose files)" if inject_dir in f.parents else "") for mn, f in found]
+                  for rel, found in providers.items() if rel in jobs}
         if jobs:
             cb(len(mods) / steps, f"Merging {len(jobs)} archive(s) changed by several mods...")
             pn, pprob = korok_merge.merge_mod_archives(
                 jobs, self.graphic_packs_dir, self._vanilla_roots(),
-                progress=lambda f, t: cb(len(mods) / steps, t))
+                progress=lambda f, t: cb(len(mods) / steps, t), labels=labels)
             shutil.rmtree(inject_dir, ignore_errors=True)
             pack_report = f"Archives merged across mods / with vanilla: {pn}." + (
                 f" Loose files moved into packs: {self._injected_count}." if self._injected_count else "") + (
