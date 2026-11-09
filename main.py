@@ -730,7 +730,7 @@ class KorokUI(QMainWindow):
             lines.append("\n" + self.engine.last_build_summary)
         text = "\n".join(lines)
 
-        has_problems = "problems" in self.engine.last_merge_report
+        has_problems = "problems" in self.engine.last_merge_report or "WARNING" in self.engine.last_merge_report
         if build_error or (results and not ok):
             QMessageBox.critical(self, "Error", text)
         elif failed or any(w for _, w, _, _n in ok) or has_problems:

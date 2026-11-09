@@ -473,6 +473,33 @@ default = true
 
         return warnings
 
+    def _texture_split_warnings(self, mods) -> list:
+        """A model's textures are split in two files (X.Tex1 = base, X.Tex2 = mipmaps) that
+        must come from the same mod. Warn when the copies that end up in the pack (the
+        lowest mod in the load order wins) come from different mods - in game that shows
+        as garbled pink/green/black textures."""
+        winner = {}                                  # "Model/X.TexN" -> mod name
+        for m in mods:
+            for game_dir in ("content", "aoc"):
+                d = m / game_dir / "Model"
+                if d.is_dir():
+                    for f in d.glob("*.Tex[12].*"):
+                        key = f"{game_dir}/Model/{f.name.rsplit('.', 1)[0]}"
+                        winner[key] = m.name
+        out = []
+        for key, mod1 in sorted(winner.items()):
+            if not key.endswith(".Tex1"):
+                continue
+            mod2 = winner.get(key[:-1] + "2")
+            if mod2 and mod2 != mod1:
+                name = key.split("/Model/", 1)[1][:-5]
+                out.append(f"WARNING: {name}: Tex1 comes from '{mod1}' but Tex2 from '{mod2}' - "
+                           "these must match or the textures show garbled. Change the load order "
+                           "or turn one of the mods off.")
+        for w in out:
+            korok_merge._log(w)
+        return out
+
     def _pack_injections(self, mod_dir: pathlib.Path) -> dict:
         """{staged pack path: partial archive bytes} holding this mod's loose files whose only
         place in the game is inside a pack the mod also ships (UKMM rebuilds such a pack
@@ -1080,6 +1107,7 @@ default = true
                 partial.add((m.name, rel))
         jobs = {rel: [f for _, f in found] for rel, found in providers.items()
                 if len(found) > 1 or any((mn, rel) in partial for mn, _ in found)}
+        tex_warnings = self._texture_split_warnings(mods)
         labels = {rel: [mn + (" (loose files)" if inject_dir in f.parents else "") for mn, f in found]
                   for rel, found in providers.items() if rel in jobs}
         if jobs:
@@ -1088,7 +1116,8 @@ default = true
                 jobs, self.graphic_packs_dir, self._vanilla_roots(),
                 progress=lambda f, t: cb(len(mods) / steps, t), labels=labels)
             shutil.rmtree(inject_dir, ignore_errors=True)
-            pack_report = f"Archives merged across mods / with vanilla: {pn}." + (
+            pack_report = (("\n".join(tex_warnings) + "\n") if tex_warnings else "") + \
+                f"Archives merged across mods / with vanilla: {pn}." + (
                 f" Loose files moved into packs: {self._injected_count}." if self._injected_count else "") + (
                 "\nArchive problems:\n  " + "\n  ".join(pprob[:8]) if pprob else "")
         self.rstb_delete_names = []
@@ -1142,6 +1171,8 @@ default = true
             self.last_merge_report = (pack_report + "\n" if pack_report else "") + f"Merge logs: {n} file edit(s) applied." + (
                 "\nMerge problems:\n  " + "\n  ".join(problems[:8]) if problems else "")
 
+        if not jobs and tex_warnings:
+            pack_report = "\n".join(tex_warnings) + (("\n" + pack_report) if pack_report else "")
         if not self.last_merge_report and pack_report:
             self.last_merge_report = pack_report
         cb((len(mods) + 1) / steps, "Patching resource size table (RSTB)...")

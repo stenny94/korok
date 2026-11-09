@@ -57,13 +57,20 @@ def supported_logs() -> set:
 LOG_FILE = None  # set by the engine to a writable path
 
 
+import threading
+_LOG_LOCK = threading.Lock()
+
+
 def _log(msg: str):
+    # archives are merged on several threads; on Windows, appends to the same file from
+    # several threads at once can overwrite each other, so write one at a time
     if LOG_FILE:
-        try:
-            with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(msg + "\n")
-        except Exception:
-            pass
+        with _LOG_LOCK:
+            try:
+                with open(LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(msg + "\n")
+            except Exception:
+                pass
 
 
 # ------------------------------------------------------------------ result cache
