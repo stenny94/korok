@@ -17,22 +17,24 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 
 ## Features
 
-- Import mods from `.bnp`, `.zip`, `.7z` or an unpacked folder
-- **UKMM packages without UKMM:** Korok reads UKMM's package format itself and rebuilds the game
-  files from your Cemu game files. This is a port of UKMM's own code (all of its file types),
-  checked file by file against UKMM's output.
+- Import mods from `.bnp`, `.zip`, `.7z`, UKMM packages, or an unpacked folder
+- **One way of handling every mod, the UKMM way.** Korok's mod handling is a port of UKMM's own
+  code. Every mod is stored the way UKMM stores mods: each file it changes is kept as just the
+  *changes* against the game's own version. When you apply a profile, every changed file is
+  rebuilt from your game files with all enabled mods' changes merged in, in load order, so mods
+  that touch the same file (actor info, game data, texts, packs like `TitleBG.pack`, ...) keep each
+  other's changes. Checked file by file against UKMM's own output.
+  - **UKMM packages** are used as they are, without needing UKMM.
+  - **BCML packages (`.bnp`)** are converted the way UKMM converts them: their merge logs are
+    applied to your game files, and the partial packs BCML ships are filled back up with the game
+    files they leave out.
+  - **Graphic packs / folders** (`content` and/or `aoc`) are compared with your game files.
+- **Resource size table** updated for every rebuilt file with UKMM's size calculations, so the game
+  reserves enough memory for modded models, textures and data
 - **Install options:** mods that come with options (UKMM packages and BNPs) show a window where you
   pick them, with the mod's defaults already selected
 - Archives with several mod folders but no option list (hair styles, colours, ...) are imported as
   one main mod plus a switched-off mod per folder, so you can tick the ones you want
-- **Archives several mods change** (like `TitleBG.pack`, `Bootup.pack` or an actor pack) are merged
-  file by file, so each mod keeps its own changes inside them; the load order only decides when
-  two mods change the same file
-- **Loose files that belong inside a pack the mod also ships** (for example a player model such
-  as `Model/Armor_Default.sbfres` next to the mod's own `TitleBG.pack`) are put into that pack,
-  as UKMM does
-- Merges BCML-style (`.bnp`) mods: actor info, game data, save data, area data,
-  drop tables, shops, quests, map units, dialogue, event info and more
 - **Profiles:** named sets of mods with their own on/off choices and load order
 - **Save Manager:** keep several save slots, each with its own save file and, optionally, its own
   profile. Switching swaps the save Cemu sees and applies the profile for you. Korok backs up your
@@ -41,6 +43,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   file, with a backup made before every write
 - Launch Cemu and BotW straight from Korok
 - 1-click install links (**WIP**)
+
+Korok reads the game's own files from Cemu's `mlc01` folder (base game, update and DLC installed
+in Cemu), both when importing a mod and when applying a profile.
 
 ## Requirements
 
@@ -89,6 +94,7 @@ On first start Korok opens the **Settings** tab: set your Cemu folder there (Cem
 are filled in automatically when Korok finds them). Then:
 
 1. **Import** tab: import your mods. Each one is added to your library and to the active profile.
+   (Importing compares the mod with your game files, so set your Cemu folder first.)
 2. **Mods** tab: tick the mods you want and set their order (lower in the list wins when two mods
    change the same file).
 3. **Import** tab: press **Apply to Cemu**. Korok builds the **Korok Mods** graphic pack.
@@ -108,7 +114,9 @@ are filled in automatically when Korok finds them). Then:
 
 ## Terms
 
-- **Library:** every mod you have imported.
+- **Library:** every mod you have imported (kept in the `korok_library` folder, one UKMM-format
+  `mod.zip` per mod). Mods imported with Korok versions before the rebuild (in `korok_staging`)
+  aren't used any more: import them again. The old folder can be deleted.
 - **Profile:** a named set of mods from your library, with its own on/off choices and load order.
   (Older versions of Korok called these *playlists*.) Only the active profile is built into the
   pack.
@@ -125,28 +133,24 @@ are filled in automatically when Korok finds them). Then:
 
 ## Compatibility
 
-Mods I have tested with Korok. This is a small list, so a mod not being here doesn't mean it won't work.
+Mods I have tested with Korok. This is a small list, so a mod not being here doesn't mean it won't
+work. Mod handling was rebuilt from scratch, so everything below needs retesting.
 
-### Working
-
-| Mod | Author | Notes |
-| --- | --- | --- |
-| [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Works |
-| [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Works |
-| [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Works |
-| Zelda's Ballad | | Worked, but Zelda had no hair unless she wore a headdress. Korok now removes the RSTB entries of files a mod replaces so bigger models load. Needs retesting |
-
-### Not working
+### Tested with earlier versions
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | BNP version: the game gets stuck on a black loading screen when starting a new save. UKMM version now imports with Korok's own reader, including its install options (needs retesting in game) |
+| [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Worked |
+| [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Worked |
+| [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Worked |
+| Zelda's Ballad | | Zelda had no hair and garbled textures. Needs retesting |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | BNP version got stuck on a black loading screen. Needs retesting |
 
 ## Troubleshooting
 
 - **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py main.py`.
-- **A build fails or the game crashes**: send `korok_build.log` and `korok_merge.log` from the
-  Korok `logs` folder when asking for help (and `korok_ukmm.log` for UKMM packages).
+- **A build fails or the game crashes**: send `korok_build.log` and `korok_import.log` from the
+  Korok `logs` folder when asking for help.
 - **`pip install -r requirements.txt` fails on one package**: install the rest by name, e.g.
   `pip install cbor2 zstandard pymsyt`.
 
@@ -154,14 +158,16 @@ Mods I have tested with Korok. This is a small list, so a mod not being here doe
 
 Korok builds on the work of others:
 
-- **[BCML](https://github.com/NiceneNerd/BCML)** by Nicene Nerd (GPL-3.0+). The merge logic for
-  BNP mods is ported from BCML's mergers.
-- **[UKMM](https://github.com/NiceneNerd/ukmm)** by Nicene Nerd (GPL-3.0). Korok's UKMM package
-  reader is a port of UKMM's code, and `data/ukmm_zsdic` and `data/ukmm_filemap_wiiu.json.zst`
-  are UKMM's own data files. BNP install options follow BCML's behaviour.
+- **[UKMM](https://github.com/NiceneNerd/ukmm)** by Nicene Nerd (GPL-3.0). Korok's mod handling
+  (packaging, BNP conversion, merging, deploying) is a port of UKMM's code, and `data/ukmm_zsdic`
+  and `data/ukmm_filemap_wiiu.json.zst` are UKMM's own data files.
+- **[BCML](https://github.com/NiceneNerd/BCML)** by Nicene Nerd (GPL-3.0+), whose BNP format and
+  merge logs Korok reads.
 - **[oead](https://github.com/zeldamods/oead)** by the Zelda Modding community, for reading and
   writing BYML, AAMP, SARC and Yaz0 files.
-- **[rstb](https://github.com/zeldamods/rstb)**, the Resource Size Table format and size formulas.
+- **[rstb-rust](https://github.com/GingerAvalanche/rstb-rust)** by GingerAvalanche and Nicene Nerd
+  (GPL-3.0), the resource size calculations Korok ports, and
+  **[rstb](https://github.com/zeldamods/rstb)** for the table format.
 - **[msyt](https://github.com/NiceneNerd/msyt)** (via `pymsyt`), for editing game text.
 - **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** for the interface,
   **[PyYAML](https://pyyaml.org/)**, **[py7zr](https://github.com/miurahr/py7zr)**,

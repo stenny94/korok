@@ -66,12 +66,52 @@ def _simple_byml(data, vanilla, canon):
 
 
 # ------------------------------------------------------------- game text (MessagePack)
+def msyt_path():
+    """The msyt tool bundled with the 'pymsyt' package, or None."""
+    try:
+        import pymsyt
+        p = pathlib.Path(pymsyt.MSYT_PATH)
+        return p if p.exists() else None
+    except Exception:
+        return None
+
+
 def _msyt_run(args):
-    import korok_merge
-    exe = korok_merge.msyt_path()
+    import os
+    import subprocess
+    exe = msyt_path()
     if exe is None:
         raise UnsupportedResource("MessagePack (needs: pip install pymsyt)", "")
-    korok_merge._run_msyt(exe, args)
+    flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+    r = subprocess.run([str(exe)] + args, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, creationflags=flags, timeout=600)
+    if r.returncode != 0:
+        raise RuntimeError(f"msyt failed: {(r.stdout + r.stderr).strip()[:300]}")
+
+
+def msbt_sarc_to_msyt(data: bytes) -> dict:
+    """A Msg_XXxx.product.sarc -> {file name without .msbt: msyt document}."""
+    import shutil
+    import tempfile
+    import yaml
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_msyt_"))
+    try:
+        src, out = tmp / "in", tmp / "out"
+        src.mkdir()
+        names = []
+        for f in oead.Sarc(data).get_files():
+            if f.name.endswith(".msbt"):
+                p = src / f.name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(bytes(f.data))
+                names.append(f.name[:-5])
+        if names:
+            _msyt_run(["export", "-d", "-o", str(out), str(src)])
+        return {n: yaml.load((out / f"{n}.msyt").read_text(encoding="utf-8"), Loader=yaml.CSafeLoader
+                             if hasattr(yaml, "CSafeLoader") else yaml.SafeLoader) or {}
+                for n in sorted(names)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _game_languages(dump):
@@ -125,7 +165,8 @@ def build_text_packs(conv):
         diff = modded[src]
         boot = conv.dump.get_bytes(f"Pack/Bootup_{lang}.pack")
         msg_name = f"Message/Msg_{lang}.product.ssarc"
-        vanilla = oead.Sarc(boot).get_file(msg_name) if boot is not None else None
+        vanilla = next((f for f in oead.Sarc(boot).get_files() if f.name == msg_name), None) \
+            if boot is not None else None
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_ukmm_text_"))
         try:
             in_dir, yml_dir, new_dir, msb_dir = (tmp / d for d in ("in", "yml", "new", "out"))
@@ -133,7 +174,8 @@ def build_text_packs(conv):
                 d.mkdir()
             base_files = {}
             if vanilla is not None:
-                vs = oead.Sarc(unyaz(bytes(vanilla.data)))
+                vs_data = unyaz(bytes(vanilla.data))
+                vs = oead.Sarc(vs_data)
                 for f in vs.get_files():
                     if f.name.endswith(".msbt"):
                         p = in_dir / f.name
@@ -168,6 +210,29 @@ def build_text_packs(conv):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     return out
+
+
+def msyt_to_msbt_sarc(docs: dict) -> bytes:
+    """{file name without .msbt: msyt document} -> a Msg_XXxx.product.sarc (uncompressed)."""
+    import json
+    import shutil
+    import tempfile
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_msyt_"))
+    try:
+        src, out = tmp / "in", tmp / "out"
+        src.mkdir()
+        for name, doc in docs.items():
+            t = src / f"{name}.msyt"
+            t.parent.mkdir(parents=True, exist_ok=True)
+            t.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        if docs:
+            _msyt_run(["create", "-d", "-B", "-p", "wiiu", "-o", str(out), str(src)])
+        w = oead.SarcWriter(endian=oead.Endianness.Big)
+        for name in sorted(docs):
+            w.files[f"{name}.msbt"] = (out / f"{name}.msbt").read_bytes()
+        return bytes(w.write()[1])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ------------------------------------------------------------- helpers
@@ -1468,10 +1533,11 @@ def bymldata_from_cbor(d, fields):
 
 def _gd_extract(sarc, field):
     data_type = "string_data" if field == "string32_data" else field.replace("revival_", "", 1)
+    files = {f.name: f for f in sarc.get_files()}
     flags = {}
     i = 0
     while True:
-        f = sarc.get_file(f"/{field}_{i}.bgdata") or sarc.get_file(f"{field}_{i}.bgdata")
+        f = files.get(f"/{field}_{i}.bgdata") or files.get(f"{field}_{i}.bgdata")
         if f is None:
             break
         h = oead.byml.from_binary(bytes(f.data))

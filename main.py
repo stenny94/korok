@@ -406,15 +406,6 @@ class KorokUI(QMainWindow):
         self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
         self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
         ml.addWidget(self.auto_apply_chk)
-        self.move_loose_chk = QCheckBox("Move a mod's loose files into the packs it ships (like UKMM)")
-        self.move_loose_chk.setToolTip(
-            "Some files only take effect inside a pack (e.g. player models in TitleBG.pack). When a mod\n"
-            "ships such a pack and also the files loose, Korok puts them into the pack, as UKMM does.\n"
-            "Turn off to compare if a mod looks wrong; apply again afterwards.")
-        self.move_loose_chk.setChecked(self.engine.move_loose_into_packs)
-        self.move_loose_chk.toggled.connect(lambda on: (self.engine.set_move_loose_into_packs(on),
-                                                        self.update_pending()))
-        ml.addWidget(self.move_loose_chk)
         lay.addWidget(mods)
         lay.addStretch(1)
         return page
@@ -536,9 +527,9 @@ class KorokUI(QMainWindow):
                 name_item.setForeground(Qt.GlobalColor.gray)
             self.table.setItem(row, 2, name_item)
 
-            note = ""
-            if info["needs_merge"]:
-                note = "Needs merge logs Korok can't apply (" + ", ".join(info["needs_merge"][:3]) + ")"
+            note = info.get("source", "")
+            if info.get("file"):
+                note = f"{note} - {info['file']}" if note else info["file"]
             note_item = QTableWidgetItem(note)
             note_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             note_item.setToolTip(note)
@@ -672,7 +663,7 @@ class KorokUI(QMainWindow):
     def set_busy(self, busy: bool):
         for w in (self.import_btn, self.import_dir_btn, self.apply_btn, self.force_btn, self.browse_btn, self.cemu_input,
                   self.table, self.tree, self.new_pl_btn, self.ren_pl_btn,
-                  self.del_pl_btn, self.up_btn, self.down_btn, self.auto_apply_chk, self.move_loose_chk):
+                  self.del_pl_btn, self.up_btn, self.down_btn, self.auto_apply_chk):
             w.setEnabled(not busy)
 
     def start_job(self, items: list, force: bool = False):
@@ -768,11 +759,6 @@ class KorokUI(QMainWindow):
             "BotW Mod Files (*.bnp *.zip *.7z);;BNP Files (*.bnp);;Zip Files (*.zip);;7-Zip Files (*.7z)",
         )
         if file_paths:
-            if any(self.engine.is_ukmm_archive(p) for p in file_paths) and \
-                    not self.engine.native_ukmm_available() and not self.ensure_ukmm():
-                file_paths = [p for p in file_paths if not self.engine.is_ukmm_archive(p)]
-                if not file_paths:
-                    return
             keep = []
             for p in file_paths:
                 if True:
@@ -786,29 +772,10 @@ class KorokUI(QMainWindow):
             if keep:
                 self.start_job([("file", p) for p in keep])
 
-    def ensure_ukmm(self) -> bool:
-        """UKMM packages are converted by running UKMM; make sure we know where ukmm.exe is."""
-        if self.engine.ukmm_exe() is not None:
-            return True
-        QMessageBox.information(
-            self, "UKMM needed",
-            "This is a UKMM mod package. Its files are stored in UKMM's own format. Korok can "
-            "read them itself once its extra packages are installed (pip install -r "
-            "requirements.txt); otherwise it runs UKMM in the background to convert it (your own "
-            "UKMM mods and settings are not touched).\n\nUKMM must be set up once for Wii U "
-            "(game dump folders). Point Korok at ukmm.exe next.")
-        exe, _ = QFileDialog.getOpenFileName(self, "Locate ukmm.exe", "", "UKMM (ukmm.exe ukmm);;All files (*)")
-        if not exe:
-            return False
-        self.engine.set_ukmm_exe(exe)
-        return True
-
     def import_mod_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Select a graphic pack folder (contains 'content' and/or 'aoc')")
         if folder:
-            if self.engine.is_ukmm_archive(folder) and not self.ensure_ukmm():
-                return
             groups = self.engine.mod_option_groups(folder)
             if groups:
                 dlg = ModOptionsDialog(display_name_for(folder), groups, self)
