@@ -86,7 +86,7 @@ def canonicalize(path: str) -> str:
 def compress_if(data: bytes, name: str) -> bytes:
     """roead::yaz0::compress_if: Yaz0 when the extension starts with 's' (not .sarc)."""
     ext = name.rpartition("/")[2].rpartition(".")[2] if "." in name.rpartition("/")[2] else ""
-    if ext.startswith("s") and ext != "sarc":
+    if ext.startswith("s") and ext != "sarc" and data[:4] != b"Yaz0":
         return bytes(oead.yaz0.compress(data))
     return data
 
@@ -112,11 +112,34 @@ def is_mergeable_sarc(name: str, data: bytes) -> bool:
 
 
 # ------------------------------------------------------------- package
+class _Tagged:
+    """A YAML node with a custom tag (serde_yaml writes enum variants as !Variant)."""
+
+    def __init__(self, tag, value):
+        self.tag, self.value = tag, value
+
+
+class _TagLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_tagged(loader, tag_suffix, node):
+    if isinstance(node, yaml.MappingNode):
+        value = loader.construct_mapping(node, deep=True)
+    elif isinstance(node, yaml.SequenceNode):
+        value = loader.construct_sequence(node, deep=True)
+    else:
+        value = loader.construct_scalar(node)
+    return _Tagged("!" + tag_suffix, value)
+
+
+_TagLoader.add_multi_constructor("!", _construct_tagged)
+
+
 def _untag(x):
     """YAML with UKMM's serde tags (!Exclusive, !Specific ...) -> plain data;
     a tagged value becomes {"_tag": name, **value} (or {"_tag": name, "value": v})."""
-    import korok_ukmm
-    if isinstance(x, korok_ukmm._Tagged):
+    if isinstance(x, _Tagged):
         v = _untag(x.value)
         return {"_tag": x.tag.lstrip("!"), **v} if isinstance(v, dict) else {"_tag": x.tag.lstrip("!"), "value": v}
     if isinstance(x, dict):
@@ -127,8 +150,20 @@ def _untag(x):
 
 
 def _load_tagged_yaml(text):
-    import korok_ukmm
-    return _untag(korok_ukmm._load_yaml(text)) or {}
+    return _untag(yaml.load(text, Loader=_TagLoader)) or {}
+
+
+def is_package(path) -> bool:
+    """A UKMM mod package: a .zip (or folder) with meta.yml + manifest.yml at the top."""
+    p = pathlib.Path(path)
+    if p.is_dir():
+        return (p / "meta.yml").is_file() and (p / "manifest.yml").is_file()
+    try:
+        with zipfile.ZipFile(p) as z:
+            names = {n.rstrip("/").lower() for n in z.namelist()}
+    except (zipfile.BadZipFile, OSError):
+        return False
+    return "meta.yml" in names and "manifest.yml" in names
 
 
 class Package:
@@ -156,9 +191,13 @@ class Package:
         return bool(self.meta.get("option_groups"))
 
     def option_groups(self) -> list:
+        return self.groups_from_meta(self.meta)
+
+    @staticmethod
+    def groups_from_meta(meta) -> list:
         """[{name, description, multiple, required, defaults: [path], options: [{name, description, path}]}]"""
         out = []
-        for g in self.meta.get("option_groups") or []:
+        for g in meta.get("option_groups") or []:
             multiple = (g.get("type") or g.get("_tag")) == "Multiple"
             defaults = list(g.get("defaults") or []) if multiple else ([g["default"]] if g.get("default") else [])
             opts = [{"name": str(o.get("name", "")), "description": str(o.get("description", "")),
@@ -236,6 +275,22 @@ def _filemap():
     return _FILEMAP
 
 
+class _OwnedSarc:
+    """oead.Sarc only borrows its buffer: keep the bytes alive with it."""
+
+    def __init__(self, data: bytes):
+        self.data = data
+        self.sarc = oead.Sarc(data)
+        self.names = {f.name for f in self.sarc.get_files()}
+
+    def get_file(self, name):
+        # oead's get_file can loop forever on a name the archive doesn't have
+        return self.sarc.get_file(name) if name in self.names else None
+
+    def get_files(self):
+        return self.sarc.get_files()
+
+
 class Dump:
     """uk_reader::ResourceReader over unpacked Wii U folders: every resource is
     found by its canonical name through UKMM's file map [aoc, update, base]."""
@@ -267,7 +322,7 @@ class Dump:
             data = self.get_bytes(path)
             if data is None:
                 return None
-            s = oead.Sarc(unyaz(data))
+            s = _OwnedSarc(unyaz(data))
             self._sarcs[path] = s
             while len(self._sarcs) > 12:
                 self._sarcs.popitem(last=False)
@@ -291,7 +346,7 @@ class Dump:
                 f = outer.get_file(parts[1])
                 if f is None:
                     return None
-                parent = oead.Sarc(unyaz(bytes(f.data)))
+                parent = _OwnedSarc(unyaz(bytes(f.data)))
                 self._sarcs[key] = parent
             inner = parts[2]
         if parent is None:
@@ -484,12 +539,14 @@ class Converter:
         self.unsupported = collections.defaultdict(list)   # kind -> [canon]
         self.problems = []
         self.built = 0
+        self.rstb = {}                                     # canon -> size (None: remove entry)
         import korok_ukmm_formats as fmt
         self.fmt = fmt
 
     def build_file(self, file: str, aoc: bool) -> bytes:
-        """ModUnpacker::build_file: vanilla, then each version from the mod (base files,
-        then enabled options) applied in order. Returns the uncompressed game file.
+        """ModUnpacker::build_file: vanilla, then every version from the mods (each mod's
+        base files, then its enabled options, mods in load order) applied in order.
+        Returns the uncompressed game file and records its size-table value.
         Results are cached: shared files (e.g. AS files) appear in many actor packs."""
         filepath = f"Aoc/0010/{file}" if aoc and not file.startswith("Aoc/0010/") else file
         canon = canonicalize(filepath)
@@ -501,20 +558,28 @@ class Converter:
             cache[canon] = data
         return data
 
+    def _rstb(self, canon, value):
+        import korok_rstb
+        if korok_rstb.can_rstb(canon):
+            self.rstb[canon] = value
+
     def _build_file(self, filepath: str, canon: str, aoc: bool) -> bytes:
+        import korok_rstb
         versions = self.pkg.versions(canon)
         vanilla = self.dump.get_bytes(filepath)
         if not versions and vanilla is None:
             raise FileNotFoundError(f"No copy of {filepath} in the game files or the mod")
         data = vanilla
         sarc_diffs = []
+        last = None
         for res in versions:
             if "Binary" in res:
-                data, sarc_diffs = bytes(res["Binary"]), []
+                data, sarc_diffs, last = bytes(res["Binary"]), [], "Binary"
             elif "Mergeable" in res:
                 (kind, mdata), = res["Mergeable"].items()
                 try:
                     data = self.fmt.build(kind, mdata, data, canon)
+                    last = "Mergeable"
                 except UnsupportedResource as e:
                     if canon not in self.unsupported[e.kind]:
                         self.unsupported[e.kind].append(canon)
@@ -523,12 +588,20 @@ class Converter:
                     # keep the game working; this change is missing
             elif "Sarc" in res:
                 sarc_diffs.append(res["Sarc"])
-        if versions and not sarc_diffs and ("Binary" in versions[-1] or "Mergeable" in versions[-1]):
+        if versions and not sarc_diffs and last is not None:
+            if last == "Binary":
+                self._rstb(canon, korok_rstb.estimate_from_bytes(data, filepath))
+            else:
+                self._rstb(canon, korok_rstb.estimate_from_bytes(data, canon))
             return data
         # SARC (changed file list, or unchanged archive whose files may be modded)
         if not sarc_diffs and not (data is not None and is_mergeable_sarc(canon, data)):
+            if vanilla is None or data != vanilla:
+                self._rstb(canon, korok_rstb.estimate_from_bytes(data, filepath))
             return data
-        return self.build_sarc(data, sarc_diffs, aoc, canon)
+        out = self.build_sarc(data, sarc_diffs, aoc, canon)
+        self._rstb(canon, korok_rstb.calc_from_size(len(out), canon))
+        return out
 
     def _touched(self, name, raw, aoc, depth=0) -> bool:
         """Does the mod change this file, or anything inside it?"""
@@ -550,7 +623,8 @@ class Converter:
         diffs = diff if isinstance(diff, list) else ([diff] if diff else [])
         if vanilla is not None:
             vs = oead.Sarc(vanilla)
-            names = {f.name: False for f in vs.get_files()}
+            vfiles = {f.name: f for f in vs.get_files()}
+            names = {n: False for n in vfiles}
             alignment = vs.guess_min_alignment()
         else:
             names, alignment = {}, int((diffs[0] if diffs else {}).get("alignment", 4))
@@ -565,7 +639,7 @@ class Converter:
         for name in sorted(n for n, d in names.items() if not d):
             raw = None
             if vanilla is not None:
-                f = vs.get_file(name)
+                f = vfiles.get(name)
                 raw = bytes(f.data) if f is not None else None
             if raw is not None and not self._touched(name, raw, aoc):
                 writer.files[name] = raw            # untouched: keep the vanilla bytes as they are
@@ -757,18 +831,5 @@ def package_option_groups(package_path) -> list:
     pkg = Package(package_path)
     try:
         return pkg.option_groups()
-    finally:
-        pkg.close()
-
-
-def convert_package(package_path, out_dir, dump: Dump, progress=None, log=None, options=None):
-    """options: option folder paths to use (None = the mod's defaults).
-    Returns the Converter (see .built, .unsupported, .problems, .pkg)."""
-    if not (dump.dirs[1] or dump.dirs[2]):
-        raise FileNotFoundError("the game's files weren't found in Cemu's mlc01 folder "
-                                "(base game and v208 update must be installed there)")
-    pkg = Package(package_path, options)
-    try:
-        return Converter(pkg, dump, log=log).convert(pathlib.Path(out_dir), progress=progress)
     finally:
         pkg.close()
