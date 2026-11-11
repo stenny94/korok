@@ -51,9 +51,10 @@ BUILD_LOG = LOGS_DIR / "korok_build.log"
 LIBRARY_DIR = BASE_DIR / "korok_library"
 PACKAGE_NAME = "mod.zip"
 META_NAME = "korok.json"
+BNP_RSTB_NAME = "bcml_rstb.json"    # a BNP's own size-table values
 PACK_FOLDER_NAME = "KorokMods"
 GAME_DIRS = {"content", "aoc"}
-BUILD_VERSION = "8"
+BUILD_VERSION = "9"
 UPDATE_TITLE_IDS = ("101c9400", "101c9500", "101c9300")
 CODE_FILES = ("korok_engine.py", "korok_deploy.py", "korok_ukmm_native.py", "korok_ukmm_formats.py",
               "korok_rstb.py")
@@ -378,6 +379,10 @@ default = true
             shutil.move(str(tmp_pkg), str(dest / PACKAGE_NAME))
             self._write_meta(dest, {"name": name, "source": kind, "options": chosen,
                                     "file": archive_path.name, "kept_whole": len(packer.kept_whole)})
+            floor = self._bnp_rstb(src, chosen) if kind.startswith("BCML") else {}
+            (dest / BNP_RSTB_NAME).unlink(missing_ok=True)
+            if floor:
+                (dest / BNP_RSTB_NAME).write_text(json.dumps(floor), encoding="utf-8")
             if groups:
                 labels = {o["path"]: o["name"] for g in groups for o in g["options"]}
                 self.import_notes.append("Options used: " + (", ".join(labels.get(o, o) for o in chosen)
@@ -410,6 +415,21 @@ default = true
         finally:
             shutil.rmtree(work, ignore_errors=True)
         return warnings
+
+    @staticmethod
+    def _bnp_rstb(root: pathlib.Path, options) -> dict:
+        """BCML's own size-table values for a BNP's files (logs/rstb.json, then each chosen option's)."""
+        out = {}
+        for logs in [root / "logs"] + [root / "options" / o / "logs" for o in options or []]:
+            try:
+                data = json.loads((logs / "rstb.json").read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                        out[str(k).replace("\\", "/")] = v
+        return out
 
     def _finish_import(self, name, was_known, enable):
         self.last_imported_name = name
@@ -726,7 +746,15 @@ default = true
         out.mkdir()
         conv = None
         if mods:
-            conv = korok_deploy.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"))
+            floor = {}
+            for n in names:
+                try:
+                    for k, v in json.loads((self.staging_dir / n / BNP_RSTB_NAME).read_text(encoding="utf-8")).items():
+                        floor[k] = max(floor.get(k, 0), int(v))
+                except Exception:
+                    pass
+            conv = korok_deploy.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"),
+                                       rstb_floor=floor)
         (out / "rules.txt").write_text(self.generate_rules_txt(), encoding="utf-8")
         for legacy in self.legacy_pack_dirs:
             if legacy.name == PACK_FOLDER_NAME and legacy.exists():

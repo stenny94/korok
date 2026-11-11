@@ -110,10 +110,13 @@ _FACTORY_EXTS = {
     "hksc": "HavokStaticCompound", "hks": "Lua", "lua": "Lua", "hktmrb": "HavokTmrb", "jpg": "Jpeg",
     "mubin": "Map",
 }
-# size, alignment, parse size (int = simple, None = complex: needs parsing, which Korok
+# size, alignment, parse size. Tex (Tex1/Tex2 texture files) is aligned to 0x2000: rstb-rust has
+# 0x4 there, but the game's own table holds exactly file size + 0x2000 for these (checked on
+# Armor_046.Tex1/Tex2), and entries that small leave textures garbled in game.
+# (int = simple, None = complex: needs parsing, which Korok
 # doesn't port, so it is estimated instead as UKMM does when parsing gives nothing)
 _FACTORY_INFO = {
-    "Sarc": (0x3C, 0x80, 0), "EventPack": (0x3C, 0x80, 0), "Tex": (0x20, 0x4, 0),
+    "Sarc": (0x3C, 0x80, 0), "EventPack": (0x3C, 0x80, 0), "Tex": (0x20, 0x2000, 0),
     "CafeResource": (0x13C, 0x1000, None), "CamAnim": (0x2C, 0x2000, None), "Batpl": (0x24, 0x4, 0),
     "Placement": (0x14, 0x4, 0), "Lua": (0x14, 0x4, 0), "ActorCapture": (0x3B4, 0x4, 0),
     "ItemIcon": (0xD0, 0x2000, 0), "Jpeg": (0x174, 0x2000, 0), "MapTexture": (0xD0, 0x2000, 0),

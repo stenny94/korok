@@ -570,14 +570,9 @@ class Converter:
         return data
 
     def alignment(self, name, aoc) -> int:
-        """Keep the game's Yaz0 alignment for a file (models and textures need theirs:
-        GX2 texture data read from a wrongly aligned buffer comes out garbled). New
-        models/textures get 0x2000, the largest the game uses; more never hurts."""
+        """The data alignment the game's own Yaz0 header has for this file (usually 0)."""
         path = f"Aoc/0010/{name}" if aoc and not name.startswith("Aoc/0010/") else name
-        a = self.dump.yaz0_alignment(path)
-        if not a and name.endswith(".sbfres"):
-            a = 0x2000
-        return a
+        return self.dump.yaz0_alignment(path)
 
     def _rstb(self, canon, value):
         import korok_rstb
