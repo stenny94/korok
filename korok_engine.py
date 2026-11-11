@@ -763,6 +763,9 @@ default = true
                 self.last_rstb_report,
                 self.last_merge_report,
             ]
+            if conv is not None and getattr(conv, "textures", None):
+                lines.append("Model textures (file: mod it comes from):")
+                lines += [f"  {k}: {v}" for k, v in sorted(conv.textures.items())]
             if conv is not None:
                 lines.append("Size table entries:")
                 lines += [f"  {k}: {v if v is not None else 'removed'}" for k, v in sorted(conv.rstb.items())]

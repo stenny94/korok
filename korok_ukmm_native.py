@@ -83,11 +83,12 @@ def canonicalize(path: str) -> str:
     return canon.replace(".s", ".")
 
 
-def compress_if(data: bytes, name: str) -> bytes:
-    """roead::yaz0::compress_if: Yaz0 when the extension starts with 's' (not .sarc)."""
+def compress_if(data: bytes, name: str, alignment: int = 0) -> bytes:
+    """roead::yaz0::compress_if: Yaz0 when the extension starts with 's' (not .sarc).
+    alignment goes in the Yaz0 header: the buffer alignment the game decompresses into."""
     ext = name.rpartition("/")[2].rpartition(".")[2] if "." in name.rpartition("/")[2] else ""
     if ext.startswith("s") and ext != "sarc" and data[:4] != b"Yaz0":
-        return bytes(oead.yaz0.compress(data))
+        return bytes(oead.yaz0.compress(data, data_alignment=alignment))
     return data
 
 
@@ -299,6 +300,7 @@ class Dump:
         self.dirs = ([pathlib.Path(d) for d in aoc_dirs], [pathlib.Path(d) for d in update_dirs],
                      [pathlib.Path(d) for d in base_dirs])
         self._sarcs = collections.OrderedDict()
+        self.alignments = {}
 
     @classmethod
     def from_vanilla_roots(cls, roots: dict):
@@ -352,7 +354,7 @@ class Dump:
         if parent is None:
             return None
         f = parent.get_file(inner)
-        return unyaz(bytes(f.data)) if f is not None else None
+        return bytes(f.data) if f is not None else None
 
     def get_bytes(self, path: str):
         """Decompressed vanilla bytes of a resource (any path form), or None."""
@@ -368,8 +370,17 @@ class Dump:
             else:
                 data = self._read_loose(which, fp)
             if data is not None:
+                if data[:4] == b"Yaz0" and len(data) >= 12:
+                    self.alignments[canon] = int.from_bytes(data[8:12], "big")
                 return unyaz(data)
         return None
+
+    def yaz0_alignment(self, path: str) -> int:
+        """The data alignment in the game's own Yaz0 header for this file (0 if unknown)."""
+        canon = canonicalize(path)
+        if canon not in self.alignments:
+            self.get_bytes(path)
+        return self.alignments.get(canon, 0)
 
 
 # ------------------------------------------------------------- CBOR -> oead
@@ -558,6 +569,16 @@ class Converter:
             cache[canon] = data
         return data
 
+    def alignment(self, name, aoc) -> int:
+        """Keep the game's Yaz0 alignment for a file (models and textures need theirs:
+        GX2 texture data read from a wrongly aligned buffer comes out garbled). New
+        models/textures get 0x2000, the largest the game uses; more never hurts."""
+        path = f"Aoc/0010/{name}" if aoc and not name.startswith("Aoc/0010/") else name
+        a = self.dump.yaz0_alignment(path)
+        if not a and name.endswith(".sbfres"):
+            a = 0x2000
+        return a
+
     def _rstb(self, canon, value):
         import korok_rstb
         if korok_rstb.can_rstb(canon):
@@ -649,7 +670,7 @@ class Converter:
             except FileNotFoundError as e:
                 self.problems.append(f"{canon}: {e}")
                 continue
-            writer.files[name] = compress_if(data, name)
+            writer.files[name] = compress_if(data, name, self.alignment(name, aoc))
         return bytes(writer.write()[1])
 
     def convert(self, out_dir: pathlib.Path, progress=None):
@@ -690,7 +711,7 @@ class Converter:
                 continue
             dest = out_dir / ("aoc/0010" if aoc else "content") / f
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(compress_if(data, f))
+            dest.write_bytes(compress_if(data, f, self.alignment(f, aoc)))
             self.built += 1
         return self
 
