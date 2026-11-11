@@ -128,7 +128,7 @@ are filled in automatically when korok finds them). Then:
 | **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile and ReShade preset each slot uses. Each slot keeps its own graphic packs. |
 | **Save Editor** | Edit rupees, items and game flags in a save. |
 | **Backups** | Restore, keep or delete backups; export backups and save slots to a .zip (selected ones or everything) and import them again. |
-| **ReShade** | Import ReShade presets, pick the one in use, or turn effects off. |
+| **ReShade** | Import ReShade presets (a preset .ini, or a preset download .zip/.7z: its presets are added and its `reshade-shaders` go next to Cemu.exe), pick the one in use, or turn effects off. |
 | **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
 
 **Apply to Cemu** (rebuild the korok Mods pack from
@@ -161,6 +161,12 @@ Only needed for the ReShade tab. Do this once:
 4. When it offers effect packages, keep the standard ones ticked: presets need those effects.
 5. Start the game in Cemu once. korok can now switch presets (ReShade tab) and give each save slot its
    own (Save Manager > ReShade...).
+
+Preset downloads that say "put the reshade-shaders folder and the preset .ini next to Cemu.exe" can be
+imported as they are (.zip/.7z) on the ReShade tab: korok adds the preset(s) and copies the shaders to
+the right place, and turns Cemu's Reshade Compatibility graphic pack on while a preset is in use.
+Shaders a preset needs from ReShade's own installer (listed in the preset's readme) still have to be
+ticked when installing ReShade.
 
 ## Saves
 

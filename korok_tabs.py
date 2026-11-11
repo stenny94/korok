@@ -1,7 +1,10 @@
 """Save Manager, Backups, ReShade and Save Editor tabs for korok."""
 import os
+import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -634,7 +637,9 @@ class ReShadeTab(QWidget):
         self.list = QListWidget()
         lay.addWidget(self.list, stretch=1)
         row = QHBoxLayout()
-        self.import_btn = QPushButton("Import preset (.ini)...")
+        self.import_btn = QPushButton("Import preset (.ini / .zip)...")
+        self.import_btn.setToolTip("A preset .ini, or a preset download (.zip/.7z): its presets are added and its\n"
+                                   "reshade-shaders are put next to Cemu.exe, where ReShade looks for them.")
         self.use_btn = QPushButton("Use now")
         self.use_btn.setToolTip("Point Cemu's ReShade at this preset right away.")
         self.off_btn = QPushButton("Turn effects off")
@@ -689,12 +694,27 @@ class ReShadeTab(QWidget):
                 self.list.setCurrentRow(self.list.count() - 1)
 
     def import_preset(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "ReShade presets", "", "ReShade preset (*.ini)")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "ReShade presets", "",
+            "ReShade preset or download (*.ini *.zip *.7z *.rar);;Preset (*.ini);;Download (*.zip *.7z *.rar)")
+        notes = []
         for p in paths:
             try:
-                self.mgr.import_reshade_preset(p)
+                if p.lower().endswith(".ini"):
+                    if not self.mgr.is_reshade_preset(p):
+                        raise ValueError("this doesn't look like a ReShade preset (no Techniques= line)")
+                    notes.append(f'Added preset "{self.mgr.import_reshade_preset(p)}".')
+                else:
+                    tmp = pathlib.Path(tempfile.mkdtemp(prefix="korok_reshade_"))
+                    try:
+                        self.engine._extract_archive(pathlib.Path(p), tmp)
+                        notes.append(self.mgr.import_reshade_package(tmp))
+                    finally:
+                        shutil.rmtree(tmp, ignore_errors=True)
             except Exception as e:
-                QMessageBox.warning(self, "ReShade", f"Couldn't import {p}: {e}")
+                QMessageBox.warning(self, "ReShade", f"Couldn't import {pathlib.Path(p).name}: {e}")
+        if notes:
+            QMessageBox.information(self, "ReShade", "\n".join(notes))
         self.refresh()
         self.changed.emit()
 

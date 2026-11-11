@@ -613,6 +613,59 @@ class InstanceManager:
             shutil.copy2(src, dst)
         return dst.stem
 
+    @staticmethod
+    def is_reshade_preset(path) -> bool:
+        """A ReShade preset .ini (not ReShade's own ReShade.ini settings file)."""
+        p = pathlib.Path(path)
+        if p.suffix.lower() != ".ini" or p.name.lower() in ("reshade.ini", "reshade_config.ini"):
+            return False
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        sections = {ln.strip()[1:-1].strip().upper() for ln in text.splitlines()
+                    if ln.strip().startswith("[") and ln.strip().endswith("]")}
+        if sections & {"GENERAL", "INPUT", "SCREENSHOT", "OVERLAY", "STYLE", "APP"}:
+            return False
+        return any(ln.strip().lower().startswith(("techniques=", "techniquesorting="))
+                   for ln in text.splitlines())
+
+    def import_reshade_package(self, folder) -> str:
+        """An unpacked ReShade preset download: every preset .ini goes to korok's presets, and its
+        shaders (a reshade-shaders folder, or loose Shaders/ and Textures/ folders) are copied
+        into the reshade-shaders folder next to Cemu.exe, where ReShade looks for them.
+        ReShade's own ReShade.ini is never copied over yours. Returns a summary."""
+        folder = pathlib.Path(folder)
+        presets = [p for p in sorted(folder.rglob("*.ini")) if self.is_reshade_preset(p)]
+        if not presets:
+            raise InstanceError("No ReShade preset (.ini with a Techniques= line) was found in it.")
+        names = [self.import_reshade_preset(p) for p in presets]
+        dest = self.reshade_ini().parent / "reshade-shaders"
+        copied = 0
+
+        def copy_tree(src: pathlib.Path, dst: pathlib.Path):
+            nonlocal copied
+            for f in src.rglob("*"):
+                if f.is_file():
+                    out = dst / f.relative_to(src)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, out)
+                    copied += 1
+
+        shader_roots = [d for d in folder.rglob("*") if d.is_dir() and d.name.lower() == "reshade-shaders"]
+        shader_roots = [d for d in shader_roots if not any(o in d.parents for o in shader_roots)]
+        for d in shader_roots:
+            copy_tree(d, dest)
+        if not shader_roots:
+            for d in folder.rglob("*"):
+                if d.is_dir() and d.name.lower() in ("shaders", "textures") and \
+                        not any(p.name.lower() in ("shaders", "textures") for p in d.parents):
+                    copy_tree(d, dest / ("Shaders" if d.name.lower() == "shaders" else "Textures"))
+        msg = "Added preset" + ("s " if len(names) > 1 else " ") + ", ".join(f'"{n}"' for n in names) + "."
+        if copied:
+            msg += f" Copied {copied} shader file(s) into {dest}."
+        return msg
+
     def delete_reshade_preset(self, name: str):
         (RESHADE_DIR / f"{name}.ini").unlink(missing_ok=True)
         for d in self.data["instances"].values():
