@@ -1,11 +1,12 @@
-"""Save Manager, ReShade and Save Editor tabs for korok."""
+"""Save Manager, Backups, ReShade and Save Editor tabs for korok."""
 import os
 import subprocess
 import sys
+import time
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QComboBox, QListWidget, QListWidgetItem, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
@@ -97,8 +98,7 @@ class InstancesTab(QWidget):
         self.gfx_btn = QPushButton("ReShade...")
         self.gfx_btn.setToolTip("Pick the ReShade preset for this save slot.")
         self.del_btn = QPushButton("Delete")
-        self.bak_btn = QPushButton("Restore backup...")
-        for b in (self.new_btn, self.ren_btn, self.pl_btn, self.gfx_btn, self.del_btn, self.bak_btn):
+        for b in (self.new_btn, self.ren_btn, self.pl_btn, self.gfx_btn, self.del_btn):
             row2.addWidget(b)
         lay.addLayout(row2)
 
@@ -142,7 +142,6 @@ class InstancesTab(QWidget):
         self.pl_btn.clicked.connect(self.pick_playlist)
         self.gfx_btn.clicked.connect(self.pick_graphics)
         self.del_btn.clicked.connect(self.delete_instance)
-        self.bak_btn.clicked.connect(self.restore_backup)
         self.autodetect()
         self.refresh()
 
@@ -432,20 +431,6 @@ class InstancesTab(QWidget):
             self.mgr.delete(iid)
             self.refresh()
 
-    def restore_backup(self):
-        bks = self.mgr.list_backups()
-        if not bks:
-            QMessageBox.information(self, "Backups", "No backups yet. korok makes one before every switch.")
-            return
-        name, ok = QInputDialog.getItem(self, "Restore backup", "Put this backup back as the live Cemu save:",
-                                        [b.name for b in bks], 0, False)
-        if ok:
-            try:
-                self.mgr.restore_backup(next(b for b in bks if b.name == name))
-                self.say("Backup restored into Cemu's save folder.")
-            except ki.InstanceError as e:
-                self.error(e)
-
     def shutdown(self):
         try:
             if self.mgr.active() and not self.mgr.cemu_running():
@@ -455,6 +440,181 @@ class InstancesTab(QWidget):
 
 
 # ===================================================================== #
+def _size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+class BackupsTab(QWidget):
+    """korok's backups (saves before switches, Cemu settings before graphic pack changes) and
+    save slots: restore, keep, delete, export to / import from a .zip."""
+    changed = pyqtSignal()       # save slots imported -> Save Manager should refresh
+
+    def __init__(self, engine, mgr, parent=None):
+        super().__init__(parent)
+        self.engine, self.mgr = engine, mgr
+        lay = QVBoxLayout(self)
+        intro = QLabel("korok backs up your live save before every switch or restore, and Cemu's settings "
+                       "before it changes graphic packs. It keeps the newest 15 of each; <b>kept</b> backups are "
+                       "never cleared. Export saves backups and/or save slots (save, graphic packs, ReShade "
+                       "preset, profile name) into one .zip you can import again, here or on another PC.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        lay.addWidget(QLabel("Backups:"))
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Kept", "Date", "What", "Reason", "Size"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        h = self.table.horizontalHeader()
+        for c in range(5):
+            h.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch if c == 3
+                                   else QHeaderView.ResizeMode.ResizeToContents)
+        lay.addWidget(self.table, stretch=2)
+        row = QHBoxLayout()
+        self.restore_btn = QPushButton("Restore")
+        self.restore_btn.setToolTip("Put the backup back (the live save, or Cemu's settings). Close Cemu first.")
+        self.keep_btn = QPushButton("Keep / don't keep")
+        self.keep_btn.setToolTip("Kept backups are never cleared automatically.")
+        self.del_btn = QPushButton("Delete")
+        for b in (self.restore_btn, self.keep_btn, self.del_btn):
+            row.addWidget(b)
+        lay.addLayout(row)
+
+        lay.addWidget(QLabel("Save slots (for export):"))
+        self.slots = QListWidget()
+        self.slots.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        lay.addWidget(self.slots, stretch=1)
+
+        row2 = QHBoxLayout()
+        self.export_sel_btn = QPushButton("Export selected...")
+        self.export_sel_btn.setToolTip("The backups and save slots selected above (Ctrl/Shift to pick several).")
+        self.export_all_btn = QPushButton("Export everything...")
+        self.import_btn = QPushButton("Import...")
+        for b in (self.export_sel_btn, self.export_all_btn, self.import_btn):
+            row2.addWidget(b)
+        lay.addLayout(row2)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+
+        self.restore_btn.clicked.connect(self.restore)
+        self.keep_btn.clicked.connect(self.toggle_keep)
+        self.del_btn.clicked.connect(self.delete)
+        self.export_sel_btn.clicked.connect(lambda: self.export(False))
+        self.export_all_btn.clicked.connect(lambda: self.export(True))
+        self.import_btn.clicked.connect(self.do_import)
+        self.refresh()
+
+    def refresh(self):
+        keep = set(self.selected_backups())
+        self.table.setRowCount(0)
+        for b in self.mgr.all_backups():
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            vals = ["Kept" if b["pinned"] else "", b["when"],
+                    "Save" if b["kind"] == "save" else "Cemu settings", b["reason"], _size(b["size"])]
+            for c, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if c == 1:
+                    it.setData(Qt.ItemDataRole.UserRole, b["name"])
+                self.table.setItem(r, c, it)
+            if b["name"] in keep:
+                self.table.selectRow(r)
+        sel = {it.data(Qt.ItemDataRole.UserRole) for it in self.slots.selectedItems()}
+        self.slots.clear()
+        for iid in self.mgr.names():
+            it = QListWidgetItem(self.mgr.info(iid)["name"])
+            it.setData(Qt.ItemDataRole.UserRole, iid)
+            self.slots.addItem(it)
+            it.setSelected(iid in sel)
+
+    def selected_backups(self) -> list:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        return [self.table.item(r, 1).data(Qt.ItemDataRole.UserRole) for r in rows if self.table.item(r, 1)]
+
+    def _one(self):
+        names = self.selected_backups()
+        if len(names) != 1:
+            QMessageBox.information(self, "Backups", "Select one backup first.")
+            return None
+        return names[0]
+
+    def restore(self):
+        name = self._one()
+        if not name:
+            return
+        what = "Cemu's settings (graphic packs)" if name.endswith(".xml") else "your live Cemu save"
+        if QMessageBox.question(self, "Restore backup",
+                                f"Replace {what} with this backup? korok backs up the current one first.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.mgr.restore_any_backup(name)
+            self.status.setText("Backup restored.")
+        except Exception as e:
+            QMessageBox.warning(self, "Backups", str(e))
+        self.refresh()
+
+    def toggle_keep(self):
+        names = self.selected_backups()
+        if not names:
+            QMessageBox.information(self, "Backups", "Select a backup first.")
+            return
+        pinned = {b["name"] for b in self.mgr.all_backups() if b["pinned"]}
+        keep = not all(n in pinned for n in names)
+        for n in names:
+            self.mgr.set_pinned(n, keep)
+        self.refresh()
+
+    def delete(self):
+        names = self.selected_backups()
+        if not names:
+            return
+        if QMessageBox.question(self, "Delete backups", f"Delete {len(names)} backup(s)? This can't be undone.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        for n in names:
+            try:
+                self.mgr.delete_backup(n)
+            except Exception as e:
+                QMessageBox.warning(self, "Backups", f"Couldn't delete {n}: {e}")
+        self.refresh()
+
+    def export(self, everything: bool):
+        if everything:
+            backups = [b["name"] for b in self.mgr.all_backups()]
+            slots = list(self.mgr.names())
+        else:
+            backups = self.selected_backups()
+            slots = [it.data(Qt.ItemDataRole.UserRole) for it in self.slots.selectedItems()]
+        if not backups and not slots:
+            QMessageBox.information(self, "Export", "Select the backups and/or save slots to export first.")
+            return
+        dest, _ = QFileDialog.getSaveFileName(self, "Export to", f"korok_backup_{time.strftime('%Y%m%d-%H%M')}.zip",
+                                              "Zip (*.zip)")
+        if not dest:
+            return
+        try:
+            self.status.setText(self.mgr.export_zip(dest, backups, slots) + f"  ({dest})")
+        except Exception as e:
+            QMessageBox.warning(self, "Export", f"Export failed: {e}")
+
+    def do_import(self):
+        src, _ = QFileDialog.getOpenFileName(self, "Import korok backup", "", "Zip (*.zip)")
+        if not src:
+            return
+        try:
+            self.status.setText(self.mgr.import_zip(src))
+        except Exception as e:
+            QMessageBox.warning(self, "Import", f"Import failed: {e}")
+        self.refresh()
+        self.changed.emit()
+
+
 RESHADE_URL = "https://reshade.me"
 
 

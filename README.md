@@ -38,12 +38,16 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 - **Profiles:** named sets of mods with their own on/off choices and load order
 - **Save Manager:** keep several save slots, each with its own save file and, optionally, its own
   profile. Switching swaps the save Cemu sees and applies the profile for you. korok backs up your
-  live save before every switch and can restore from those backups.
+  live save before every switch.
   If the game already has save data the first time you open it, that save is added as the
   **Main save** slot.
   Every save slot keeps its own **Cemu graphic packs** (which packs are on and their presets), and
   can have its own **ReShade preset**; they're put in place when you switch to it. A new save slot is
   a brand-new game: an empty save with no graphic packs on.
+- **Backups:** see, restore, keep or delete korok's backups (saves from before each switch, Cemu
+  settings from before graphic pack changes), and export backups and/or whole save slots (save,
+  graphic packs, ReShade preset, profile name) to a .zip, all at once or picked individually.
+  Import puts them back, here or on another PC.
 - **ReShade presets:** keep presets in korok and switch the one Cemu's ReShade uses (or turn effects
   off). While a preset is in use, korok turns on Cemu's *Reshade Compatibility* graphic pack, and
   turns it off again with effects off. ReShade itself is installed once with its own installer (korok
@@ -120,6 +124,7 @@ are filled in automatically when korok finds them). Then:
 | **Import** | Import mods (.bnp / .zip / .7z or a folder). |
 | **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile and ReShade preset each slot uses. Each slot keeps its own graphic packs. |
 | **Save Editor** | Edit rupees, items and game flags in a save. |
+| **Backups** | Restore, keep or delete backups; export backups and save slots to a .zip (selected ones or everything) and import them again. |
 | **ReShade** | Import ReShade presets, pick the one in use, or turn effects off. |
 | **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
 
@@ -157,7 +162,8 @@ Only needed for the ReShade tab. Do this once:
 ## Saves
 
 - Close Cemu before switching save slots or editing a save.
-- korok backs up the save before every switch and every edit (in the `korok_backups` folder).
+- korok backs up the save before every switch and every edit (in the `korok_backups` folder; see the
+  **Backups** tab).
   The save editor has had limited testing against real saves, so keep a copy of your own too.
 
 ## Compatibility
