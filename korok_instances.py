@@ -380,8 +380,10 @@ class InstanceManager:
                 self.remember_graphics(iid)      # first time: start from the current choices
         rs = d.get("reshade") or ""
         if rs:
-            self.use_reshade_preset(rs)
+            note = self.use_reshade_preset(rs)
             notes.append("ReShade: " + ("off." if rs == RESHADE_OFF else f'preset "{rs}".'))
+            if note:
+                notes.append(note)
         return notes
 
     def reshade_ini(self) -> pathlib.Path:
@@ -451,8 +453,51 @@ class InstanceManager:
                 return s.split("=", 1)[1].strip() or None
         return None
 
-    def use_reshade_preset(self, name: str):
-        """Point ReShade.ini (next to Cemu.exe) at a korok preset, or at an empty one (off)."""
+    def find_reshade_compat_pack(self):
+        """settings.xml filename of Cemu's "Reshade Compatibility" graphic pack for BotW, or None."""
+        root = self.engine.user_dir / "graphicPacks"
+        if not root.is_dir():
+            return None
+        for rules in root.rglob("rules.txt"):
+            try:
+                text = rules.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                continue
+            name = next((ln.split("=", 1)[1] for ln in text.splitlines()
+                         if ln.strip().startswith("name") and "=" in ln), "")
+            if "reshade" in name and "compatib" in name and "101c9400" in text:
+                return rules.relative_to(self.engine.user_dir).as_posix()
+        return None
+
+    def set_reshade_compat_pack(self, on: bool) -> str:
+        """Turn Cemu's Reshade Compatibility graphic pack on or off in settings.xml.
+        Returns a note for the user ("" when nothing changed)."""
+        rel = self.find_reshade_compat_pack()
+        settings = self.cemu_settings_file()
+        if rel is None or not settings.is_file():
+            return ""
+        if self.cemu_running():
+            return ("Close Cemu, then pick the preset again, so korok can turn Cemu's Reshade Compatibility "
+                    "graphic pack " + ("on." if on else "off."))
+        cur = ET.fromstring(self.read_graphic_packs())
+        norm = rel.lower()
+        entry = next((e for e in cur if e.get("filename", "").replace("\\", "/").lower() == norm), None)
+        if entry is None:
+            if not on:
+                return ""
+            entry = ET.SubElement(cur, "Entry", {"filename": rel})
+        elif on == (entry.get("disabled", "false").lower() != "true"):
+            return ""
+        if on:
+            entry.attrib.pop("disabled", None)
+        else:
+            entry.set("disabled", "true")
+        self.write_graphic_packs(ET.tostring(cur, encoding="unicode"))
+        return "Reshade Compatibility graphic pack turned " + ("on." if on else "off.")
+
+    def use_reshade_preset(self, name: str) -> str:
+        """Point ReShade.ini (next to Cemu.exe) at a korok preset, or at an empty one (off),
+        and turn Cemu's Reshade Compatibility graphic pack on/off to match. Returns a note."""
         RESHADE_DIR.mkdir(parents=True, exist_ok=True)
         if name == RESHADE_OFF:
             target = RESHADE_DIR / OFF_PRESET
@@ -488,6 +533,10 @@ class InstanceManager:
                 out.append(f"PresetPath={target}")
         ini.parent.mkdir(parents=True, exist_ok=True)
         ini.write_text("\n".join(out) + "\n", encoding="utf-8")
+        try:
+            return self.set_reshade_compat_pack(name != RESHADE_OFF)
+        except Exception as e:
+            return f"Couldn't change the Reshade Compatibility graphic pack: {e}"
 
     # ----------------------------------------------------------- launch --
     @staticmethod
