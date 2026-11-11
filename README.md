@@ -114,9 +114,10 @@ are filled in automatically when korok finds them). Then:
 | **Save Editor** | Edit rupees, items and game flags in a save. |
 | **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
 
-**Launch Cemu** and **Launch BotW** sit above the tabs. **Apply to Cemu** (rebuild the korok Mods pack from
+**Apply to Cemu** (rebuild the korok Mods pack from
 the active profile) and **Force full rebuild** (rebuild even if nothing changed) sit below every tab
-except Settings; the Apply button shows when there are changes that haven't been applied yet.
+except Settings; the Apply button shows when there are changes that haven't been applied yet. **Launch Cemu** and
+**Launch BotW** sit at the very bottom, on every tab.
 
 ## Terms
 

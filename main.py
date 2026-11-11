@@ -230,7 +230,6 @@ class KorokUI(QMainWindow):
         self.instance_mgr = InstanceManager(self.engine)
         self.instances_tab = InstancesTab(self.engine, self.instance_mgr)
         self.editor_tab = SaveEditorTab(self.engine, self.instance_mgr)
-        outer.addWidget(self.instances_tab.launch_box)
 
         # --- Cemu Directory Selection Bar ---
         cemu_layout = QHBoxLayout()
@@ -374,6 +373,7 @@ class KorokUI(QMainWindow):
         self.main_tabs.currentChanged.connect(self.on_tab_changed)
         outer.addWidget(self.main_tabs, stretch=1)
         outer.addWidget(self.apply_bar)
+        outer.addWidget(self.instances_tab.launch_box)     # Launch Cemu / BotW: on every tab
         self.on_tab_changed(self.main_tabs.currentIndex())
 
         main_widget.setLayout(outer)
