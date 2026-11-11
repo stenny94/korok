@@ -44,8 +44,8 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   A save slot can also keep its own **Cemu graphic packs** (which packs are on and their presets)
   and its own **ReShade preset**; they're put in place when you switch to it.
 - **ReShade presets:** keep presets in korok and switch the one Cemu's ReShade uses (or turn effects
-  off). ReShade itself is installed once with its own installer from [reshade.me](https://reshade.me);
-  korok tells you if it isn't set up.
+  off). ReShade itself is installed once with its own installer (korok can't do that part), see
+  [Setting up ReShade](#setting-up-reshade).
 - **Save Editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write
 - Launch Cemu and BotW straight from korok
@@ -137,6 +137,19 @@ except Settings; the Apply button shows when there are changes that haven't been
   versions called these *instances*.)
 - **korok Mods:** the single Cemu graphic pack korok builds. korok never turns your other graphic
   packs on or off.
+
+## Setting up ReShade
+
+Only needed for the ReShade tab. Do this once:
+
+1. On [reshade.me](https://reshade.me), click **Download ReShade** (the plain one, *not* "with full
+   add-on support").
+2. Run it and pick `Cemu.exe` in your Cemu folder.
+3. Rendering API: **Vulkan** (Cemu's default). Pick OpenGL only if you changed Cemu's graphics API to
+   OpenGL in Cemu's settings.
+4. When it offers effect packages, keep the standard ones ticked: presets need those effects.
+5. Start the game in Cemu once. korok can now switch presets (ReShade tab) and give each save slot its
+   own (Save Manager > Graphics...).
 
 ## Saves
 
