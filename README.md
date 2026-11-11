@@ -39,6 +39,8 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
 - **Save Manager:** keep several save slots, each with its own save file and, optionally, its own
   profile. Switching swaps the save Cemu sees and applies the profile for you. korok backs up your
   live save before every switch and can restore from those backups.
+  If the game already has save data the first time you open it, that save is added as the
+  **Main save** slot.
 - **Save Editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write
 - Launch Cemu and BotW straight from korok
