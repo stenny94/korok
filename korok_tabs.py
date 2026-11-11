@@ -250,15 +250,20 @@ class InstancesTab(QWidget):
         has_pl = bool(self.mgr.info(iid).get("playlist"))
         if has_pl and pending:
             # apply the playlist automatically, then launch
-            self._launch_after = launch
-            self._msg = msg
-            self.busy.emit(True, "Applying profile...")
-            self.rebuilder = RebuildWorker(self.engine)
-            self.rebuilder.progress.connect(lambda t: self.busy.emit(True, "Applying profile: " + t))
-            self.rebuilder.done.connect(self.on_rebuilt)
-            self.rebuilder.start()
+            self._apply_then(launch, True, msg)
         elif launch:
             self.do_launch(msg)
+
+    def _apply_then(self, launch, with_game, msg):
+        """Rebuild the korok Mods pack in the background, then launch if asked."""
+        self._launch_after = launch
+        self._launch_game = with_game
+        self._msg = msg
+        self.busy.emit(True, "Applying profile...")
+        self.rebuilder = RebuildWorker(self.engine)
+        self.rebuilder.progress.connect(lambda t: self.busy.emit(True, "Applying profile: " + t))
+        self.rebuilder.done.connect(self.on_rebuilt)
+        self.rebuilder.start()
 
     def on_rebuilt(self, err):
         self.rebuilder.wait()
@@ -267,9 +272,9 @@ class InstancesTab(QWidget):
         if err:
             self.error(f"Profile couldn't be applied, so Cemu was not launched:\n{err}")
             return
-        self.say(self._msg + "  Pack updated.")
+        self.say((self._msg + "  Pack updated.").strip())
         if self._launch_after:
-            self.do_launch(self._msg + "  Pack updated.")
+            self.do_launch((self._msg + "  Pack updated.").strip(), getattr(self, "_launch_game", True))
 
     def launch_cemu(self, with_game=False):
         self._store_launch()
@@ -279,6 +284,23 @@ class InstancesTab(QWidget):
         if self.mgr.cemu_running():
             QMessageBox.information(self, "Launch Cemu", "Cemu is already running.")
             return
+        try:
+            pending = self.engine.cemu_dir.exists() and self.engine.pending_changes()
+        except Exception:
+            pending = False
+        if pending:
+            answer = QMessageBox.question(
+                self, "Apply changes first?",
+                "Your mods have changes that haven't been applied to Cemu yet.\n\n"
+                "Apply them before launching?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes)
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            if answer == QMessageBox.StandardButton.Yes:
+                self._apply_then(True, with_game, "")
+                return
         self.do_launch("", with_game)
 
     def do_launch(self, msg, with_game=True):

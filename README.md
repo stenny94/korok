@@ -97,7 +97,9 @@ are filled in automatically when korok finds them). Then:
    (Importing compares the mod with your game files, so set your Cemu folder first.)
 2. **Mods** tab: tick the mods you want and set their order (lower in the list wins when two mods
    change the same file).
-3. **Import** tab: press **Apply to Cemu**. korok builds the **korok Mods** graphic pack.
+3. Press **Apply to Cemu** (at the bottom of every tab except Settings). korok builds the **korok Mods**
+   graphic pack. If you launch Cemu or BotW with changes not applied yet, korok asks whether to
+   apply them first.
 4. Start Cemu and make sure the **korok Mods** graphic pack is ticked (Options → Graphic packs).
 
 ## The tabs
@@ -105,12 +107,14 @@ are filled in automatically when korok finds them). Then:
 | Tab | What it's for |
 | --- | --- |
 | **Mods** | Your profiles (left) and the mods in the active profile (right): turn mods on and off, change the load order, delete mods from your library. |
-| **Import** | Import mods, **Apply to Cemu** (rebuild the korok Mods pack from the active profile) and **Force full rebuild** (rebuild even if nothing changed). A dot on the tab means there are changes that haven't been applied yet. |
+| **Import** | Import mods (.bnp / .zip / .7z or a folder). |
 | **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile each slot uses. |
 | **Save Editor** | Edit rupees, items and game flags in a save. |
 | **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
 
-**Launch Cemu** and **Launch BotW** sit above the tabs.
+**Launch Cemu** and **Launch BotW** sit above the tabs. **Apply to Cemu** (rebuild the korok Mods pack from
+the active profile) and **Force full rebuild** (rebuild even if nothing changed) sit below every tab
+except Settings; the Apply button shows when there are changes that haven't been applied yet.
 
 ## Terms
 
