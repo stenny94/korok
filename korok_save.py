@@ -12,36 +12,27 @@ Design notes
 * Every write: size must be unchanged, backup first, atomic replace, re-read
   and verify.
 """
-import binascii
 import json
 import os
 import pathlib
 import shutil
 import struct
 import time
-import zlib
 
 try:
     import oead
 except ImportError:  # editor is disabled without oead
     oead = None
 
-BOOTUP_REL = ("content", "Pack", "Bootup.pack")
 GAMEDATA_SSARC = "GameData/gamedata.ssarc"
 
 # words per element for each fixed-width kind
 STRING_WORDS = {"string32": 8, "string64": 16, "string256": 64}
 VECTOR_WORDS = {"vector2f": 2, "vector3f": 3, "vector4f": 4}
-KNOWN_KINDS = {"bool", "s32", "f32", "string32", "string64", "string256",
-               "vector2f", "vector3f", "vector4f"}
 
 
 def available() -> bool:
     return oead is not None
-
-
-def crc32_name(name: str) -> int:
-    return zlib.crc32(name.encode("utf-8")) & 0xFFFFFFFF
 
 
 def _kind_of(key: str):
@@ -261,9 +252,6 @@ class SaveFile:
         return ">f" if self.big else "<f"
 
     # --- element access
-    def _words(self, offs):
-        return [self.raw[o + 4:o + 8] for o in offs]
-
     def _elem_words(self, fd: FlagDef) -> int:
         if fd.kind in STRING_WORDS:
             return STRING_WORDS[fd.kind]

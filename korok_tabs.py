@@ -1,11 +1,9 @@
 """Save Manager tab and Save Editor tab for korok."""
-import pathlib
-
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
+    QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
 )
 

@@ -16,7 +16,6 @@ import pathlib
 import zlib
 
 import oead
-import yaml
 
 import korok_ukmm_diff as D
 import korok_ukmm_formats as F
@@ -885,5 +884,3 @@ def convert_bnp_folder(root: pathlib.Path, dump: Dump, lang="USen", log=None) ->
     return meta_from_info(info)
 
 
-def load_yaml(text):
-    return yaml.safe_load(text)

@@ -34,14 +34,6 @@ class MultiPackage:
             out += p.versions(canon)
         return out
 
-    def provider(self, canon):
-        """Name of the last mod (in load order) that changes this resource, or None."""
-        hit = None
-        for p in self.packages:
-            if p.has(canon):
-                hit = p.name
-        return hit
-
     def has(self, canon):
         return any(p.has(canon) for p in self.packages)
 
@@ -63,12 +55,6 @@ def deploy(mods, dump: Dump, out_dir, progress=None, log=None, rstb_floor=None):
     multi = MultiPackage(packages)
     try:
         conv = Converter(multi, dump, log=log).convert(out_dir, progress=progress)
-        conv.textures = {}       # model texture file -> mod it came from (for the build log)
-        for p in multi.packages:
-            for n in list(p._names):
-                c = n.split("/", 2)[-1] if n.startswith("options/") else n
-                if c.startswith("Model/") and (".Tex1." in c or ".Tex2." in c or ".Tex." in c):
-                    conv.textures[c] = multi.provider(c)
         # text packs are written by build_text_packs; size them like unpack_texts does
         for boot in (out_dir / "content" / "Pack").glob("Bootup_*.pack"):
             lang = boot.stem[len("Bootup_"):]

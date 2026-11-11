@@ -302,14 +302,6 @@ class Dump:
         self._sarcs = collections.OrderedDict()
         self.alignments = {}
 
-    @classmethod
-    def from_vanilla_roots(cls, roots: dict):
-        """korok's _vanilla_roots(): content roots list update dirs (0005000e) before base
-        (00050000); aoc roots end in content/0010."""
-        update = [r for r in roots.get("content", []) if "0005000e" in str(r).lower()]
-        base = [r for r in roots.get("content", []) if "00050000" in str(r).lower().replace("\\", "/").split("/title/")[-1][:8]]
-        aoc = list(roots.get("aoc", []))
-        return cls(base, update, aoc)
 
     def _read_loose(self, which: int, rel: str):
         for d in self.dirs[which]:
@@ -760,11 +752,6 @@ def pio_to_cbor(pio) -> dict:
     return {"data_type": str(pio.type), "version": int(pio.version), "param_root": plist_to_cbor(pio)}
 
 
-def param_str(p) -> str:
-    """The string in a {'StringXX': s} serde parameter."""
-    (_, v), = p.items()
-    return str(v)
-
 
 # ------------------------------------------------------------- UKMM collections (serde shapes)
 # DeleteSet / SortedDeleteSet: {key: deleted}; DeleteMap / SortedDeleteMap: {key: [value, deleted]};
@@ -778,11 +765,6 @@ def dset_merge(base: dict, diff: dict) -> dict:
     return out
 
 
-def sorted_dset_merge(base: dict, diff: dict) -> dict:
-    """SortedDeleteSet::merge."""
-    keys = {**{k: False for k in base}, **{k: bool(d) for k, d in diff.items()}}
-    return {k: False for k in sorted(keys) if not keys[k]}
-
 
 def dmap_merge(base: dict, diff: dict, sort=False) -> dict:
     """DeleteMap::merge / SortedDeleteMap::merge: diff values replace base values."""
@@ -792,19 +774,6 @@ def dmap_merge(base: dict, diff: dict, sort=False) -> dict:
     out = {k: [v[0], False] for k, v in out.items() if not v[1]}
     return dict(sorted(out.items())) if sort else out
 
-
-def dmap_deep_merge(base: dict, diff: dict, merge_value, sort=False) -> dict:
-    """DeleteMap::deep_merge: values present in both are merged with merge_value."""
-    keys = list(dict.fromkeys(list(base) + list(diff)))
-    out = {}
-    for k in keys:
-        b, d = base.get(k), diff.get(k)
-        if b is not None and d is not None:
-            out[k] = [merge_value(b[0], d[0]), bool(d[1])]
-        else:
-            out[k] = list(d if d is not None else b)
-    out = {k: [v[0], False] for k, v in out.items() if not v[1]}
-    return dict(sorted(out.items())) if sort else out
 
 
 def dvec_merge(base: list, diff: list) -> list:

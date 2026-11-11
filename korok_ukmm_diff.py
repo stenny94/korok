@@ -9,7 +9,7 @@ Port of uk-content (https://github.com/NiceneNerd/ukmm, GPL-3.0) by Nicene Nerd.
 import oead
 
 import korok_ukmm_formats as F
-from korok_ukmm_native import pio_to_cbor, pobj_to_cbor  # noqa: F401
+from korok_ukmm_native import pio_to_cbor
 
 
 class NoDiff(Exception):

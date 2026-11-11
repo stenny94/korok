@@ -219,9 +219,6 @@ class InstanceManager:
         if changed:
             self._save()
 
-    def set_notes(self, iid, notes):
-        self.data["instances"][iid]["notes"] = notes
-        self._save()
 
     def delete(self, iid):
         if iid == self.active():

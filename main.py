@@ -234,7 +234,6 @@ class KorokUI(QMainWindow):
 
         # --- Cemu Directory Selection Bar ---
         cemu_layout = QHBoxLayout()
-        cemu_label = QLabel("Cemu Folder:")
         self.cemu_input = QLineEdit(str(self.engine.cemu_dir))
         self.cemu_input.editingFinished.connect(self.on_path_edited)
         self.browse_btn = QPushButton("Browse...")
@@ -761,13 +760,12 @@ class KorokUI(QMainWindow):
         if file_paths:
             keep = []
             for p in file_paths:
-                if True:
-                    groups = self.engine.mod_option_groups(p)
-                    if groups:
-                        dlg = ModOptionsDialog(display_name_for(p), groups, self)
-                        if dlg.exec() != QDialog.DialogCode.Accepted:
-                            continue          # cancelled: don't import this one
-                        self.engine.option_choices[str(pathlib.Path(p))] = dlg.chosen()
+                groups = self.engine.mod_option_groups(p)
+                if groups:
+                    dlg = ModOptionsDialog(display_name_for(p), groups, self)
+                    if dlg.exec() != QDialog.DialogCode.Accepted:
+                        continue          # cancelled: don't import this one
+                    self.engine.option_choices[str(pathlib.Path(p))] = dlg.chosen()
                 keep.append(p)
             if keep:
                 self.start_job([("file", p) for p in keep])
