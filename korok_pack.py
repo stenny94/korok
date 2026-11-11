@@ -196,8 +196,15 @@ def _reader_langs(reader):
 
 # ------------------------------------------------------------- the packer
 class ModPacker:
-    def __init__(self, source, dest, meta: dict, dump: Dump, progress=None, log=None):
+    def __init__(self, source, dest, meta: dict, dump: Dump, progress=None, log=None,
+                 loose_like_bcml=False):
         self.source = pathlib.Path(source)
+        # BCML / plain graphic packs: a loose file the game only ever reads from inside a
+        # pack (e.g. Model/Link.Tex2.sbfres, kept in TitleBG.pack) is shadowed by the pack's
+        # copy, so it changes nothing. UKMM would put it into the pack instead, which breaks
+        # mods made for BCML that ship such files without meaning them to be used.
+        self.loose_like_bcml = loose_like_bcml
+        self.left_out = []
         self.dest = pathlib.Path(dest)
         self.meta = meta
         self.masters = Masters(dump)
@@ -291,6 +298,9 @@ class ModPacker:
                 continue
             if name.endswith("sizetable") or len(data) < 4:
                 continue
+            if self.loose_like_bcml and _only_in_packs(canon):
+                self.left_out.append(canon)
+                continue
             if not self._is_modded(name, canon, data):
                 continue
             res = resource_from_binary(name, data)
@@ -353,7 +363,17 @@ class ModPacker:
         return self.dest
 
 
-def pack_folder(source, dest, meta, dump, progress=None, log=None):
-    p = ModPacker(source, dest, meta, dump, progress, log)
+def _only_in_packs(canon: str) -> bool:
+    """True when the game keeps this resource only inside archives (no loose copy anywhere)."""
+    from korok_ukmm_native import _filemap
+    entry = _filemap().get(canon)
+    if not entry:
+        return False
+    paths = [x for x in entry if x]
+    return bool(paths) and all("//" in x for x in paths)
+
+
+def pack_folder(source, dest, meta, dump, progress=None, log=None, loose_like_bcml=False):
+    p = ModPacker(source, dest, meta, dump, progress, log, loose_like_bcml)
     p.pack()
     return p
