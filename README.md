@@ -98,10 +98,13 @@ in Cemu), both when importing a mod and when applying a profile.
 > It is highly advised to backup your save data before running this program.
 > To do that, right click on BotW in Cemu, open "Save directory", and copy those folders elsewhere.
 
-From the korok folder:
+Double-click **`korok.pyw`** in the korok folder. It opens without a terminal window (any error
+messages go to `logs/korok_console.log`).
+
+Or, from a terminal in the korok folder:
 
 ```
-python main.py
+python korok.pyw
 ```
 
 On first start korok opens the **Settings** tab: set your Cemu folder there (Cemu.exe and the game
@@ -189,7 +192,7 @@ work.
 
 ## Troubleshooting
 
-- **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py main.py`.
+- **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py korok.pyw`.
 - **A build fails or the game crashes**: send `korok_build.log` and `korok_import.log` from the
   korok `logs` folder when asking for help.
 - **`pip install -r requirements.txt` fails on one package**: install the rest by name, e.g.

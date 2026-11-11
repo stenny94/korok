@@ -1,3 +1,4 @@
+import os
 import pathlib
 import sys
 
@@ -809,6 +810,17 @@ class KorokUI(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Started without a console (double-clicked .pyw / pythonw): there's nowhere to print,
+    # so send any output and error messages to logs/korok_console.log instead.
+    if sys.stdout is None or sys.stderr is None:
+        try:
+            _log = open(pathlib.Path(__file__).resolve().parent / "logs" / "korok_console.log",
+                        "a", encoding="utf-8", buffering=1)
+        except OSError:
+            _log = open(os.devnull, "w")
+        sys.stdout = sys.stdout or _log
+        sys.stderr = sys.stderr or _log
+
     # Needed so the background merge workers (spawned processes) behave when
     # this file is re-imported by them.
     import multiprocessing
