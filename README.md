@@ -44,7 +44,9 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   A save slot can also keep its own **Cemu graphic packs** (which packs are on and their presets)
   and its own **ReShade preset**; they're put in place when you switch to it.
 - **ReShade presets:** keep presets in korok and switch the one Cemu's ReShade uses (or turn effects
-  off). ReShade itself is installed once with its own installer (korok can't do that part), see
+  off). While a preset is in use, korok turns on Cemu's *Reshade Compatibility* graphic pack, and
+  turns it off again with effects off. ReShade itself is installed once with its own installer (korok
+  can't do that part), see
   [Setting up ReShade](#setting-up-reshade).
 - **Save Editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write

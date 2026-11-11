@@ -437,7 +437,9 @@ class InstancesTab(QWidget):
         self.mgr.set_graphics(iid, own.isChecked(), combo.currentData())
         if iid == self.mgr.active() and combo.currentData():
             try:
-                self.mgr.use_reshade_preset(combo.currentData())
+                note = self.mgr.use_reshade_preset(combo.currentData())
+                if note:
+                    self.say(note)
             except Exception as e:
                 self.error(e)
         self.refresh(iid)
@@ -505,7 +507,9 @@ class ReShadeTab(QWidget):
             row.addWidget(b)
         lay.addLayout(row)
         hint = QLabel("Each save slot can pick its own preset (Save Manager > Graphics...). Presets need "
-                      "the effect files (.fx) they use, which ReShade's installer downloads.")
+                      "the effect files (.fx) they use, which ReShade's installer downloads. While a preset "
+                      "is in use, korok turns on Cemu's \"Reshade Compatibility\" graphic pack (and turns it "
+                      "off with effects off); Cemu must be closed for that.")
         hint.setWordWrap(True)
         lay.addWidget(hint)
         self.import_btn.clicked.connect(self.import_preset)
@@ -562,7 +566,9 @@ class ReShadeTab(QWidget):
             QMessageBox.information(self, "ReShade", "Select a preset first.")
             return
         try:
-            self.mgr.use_reshade_preset(name)
+            note = self.mgr.use_reshade_preset(name)
+            if note:
+                QMessageBox.information(self, "ReShade", note)
         except Exception as e:
             QMessageBox.warning(self, "ReShade", str(e))
         self.refresh()
