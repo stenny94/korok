@@ -267,8 +267,7 @@ register("Chemical", F.chemical_from, chemical_diff)
 
 def _frozen_keys(m):
     """RagdollBlendWeight keys are structs: CBOR map keys."""
-    import cbor2
-    fd = getattr(cbor2, "frozendict", None) or getattr(cbor2, "FrozenDict")
+    fd = _fd()
     return {(fd({"state_key": k[0], "system_key": k[1]}) if isinstance(k, tuple) else k): v
             for k, v in m.items()}
 
@@ -437,9 +436,21 @@ def bymldata_to_cbor(h, fields):
     return out
 
 
+class FrozenMap(dict):
+    """A hashable dict, for struct keys in CBOR maps (cbor2 writes it as a plain map).
+    cbor2's own frozendict class has a different name in every release, so Korok uses this."""
+
+    def __hash__(self):
+        return hash(tuple(sorted(self.items())))
+
+    def _ro(self, *a, **k):
+        raise TypeError("FrozenMap is read-only")
+
+    __setitem__ = __delitem__ = update = pop = popitem = clear = setdefault = _ro
+
+
 def _fd():
-    import cbor2
-    return getattr(cbor2, "frozendict", None) or getattr(cbor2, "FrozenDict")
+    return FrozenMap
 
 
 # GameDataPack
