@@ -123,13 +123,7 @@ class KorokEngine:
     def save_config_path(self, cemu_path: str):
         self._write_config(cemu_dir=cemu_path)
 
-    @staticmethod
-    def native_ukmm_available() -> bool:
-        return native.available()
 
-    @staticmethod
-    def is_ukmm_archive(path) -> bool:
-        return native.is_package(path)
 
     def resolve_user_dir(self) -> pathlib.Path:
         """Where Cemu 2.x actually reads graphicPacks/ from.
@@ -235,27 +229,6 @@ default = true
         cleaned = " ".join(cleaned.split()).strip(" .")
         return cleaned[:80] or "Unnamed Mod"
 
-    @staticmethod
-    def _embedded_name(root: pathlib.Path):
-        """Name written by the mod author: BNP info.json "name", else rules.txt "name = ..."."""
-        try:
-            info = root / "info.json"
-            if info.exists():
-                n = json.loads(info.read_text(encoding="utf-8-sig")).get("name")
-                if isinstance(n, str) and n.strip():
-                    return n.strip()
-        except Exception:
-            pass
-        try:
-            rules = root / "rules.txt"
-            if rules.exists():
-                for line in rules.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-                    k, _, v = line.partition("=")
-                    if k.strip().lower() == "name" and v.strip():
-                        return v.strip().strip('"')
-        except Exception:
-            pass
-        return None
 
     @staticmethod
     def _gamebanana_name(mod_id: str):
@@ -290,11 +263,6 @@ default = true
             queue.extend(children)
         return roots
 
-    @classmethod
-    def _find_pack_root(cls, base: pathlib.Path):
-        """Shallowest folder that directly contains 'content' or 'aoc'."""
-        roots = cls._find_pack_roots(base)
-        return roots[0] if roots else None
 
     def import_mod_archive(self, file_path: str, mod_display_name: str, _option_of: str = "") -> list:
         """Adds a mod to the library as a UKMM package. Returns a list of warning strings.
@@ -797,9 +765,6 @@ default = true
                 self.last_rstb_report,
                 self.last_merge_report,
             ]
-            if conv is not None and getattr(conv, "textures", None):
-                lines.append("Model textures (file: mod it comes from):")
-                lines += [f"  {k}: {v}" for k, v in sorted(conv.textures.items())]
             if conv is not None:
                 lines.append("Size table entries:")
                 lines += [f"  {k}: {v if v is not None else 'removed'}" for k, v in sorted(conv.rstb.items())]

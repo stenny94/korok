@@ -236,10 +236,9 @@ def msyt_to_msbt_sarc(docs: dict) -> bytes:
 
 
 # ------------------------------------------------------------- helpers
-from korok_ukmm_native import (dmap_deep_merge, dmap_merge, dset_merge, dvec_merge,  # noqa: E402
-                               merge_pobj_cbor, merge_plist_cbor, param_str, pobj_from_cbor,
-                               pobj_to_cbor, plist_from_cbor, plist_to_cbor, pio_to_cbor,
-                               sorted_dset_merge)
+from korok_ukmm_native import (dmap_merge, dset_merge, dvec_merge,  # noqa: E402
+                               merge_pobj_cbor, merge_plist_cbor, pobj_from_cbor,
+                               pobj_to_cbor, plist_from_cbor, plist_to_cbor)
 
 A = oead.aamp
 P = A.Parameter
