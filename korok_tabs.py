@@ -529,9 +529,14 @@ class ReShadeTab(QWidget):
             text = ("ReShade looks installed, but hasn't run with Cemu yet. Start the game once so it "
                     f"creates {ini.name}; korok can then switch presets.")
         else:
-            text = (f'ReShade isn\'t set up for Cemu. Install it from <a href="{RESHADE_URL}">reshade.me</a>: '
-                    f"pick {self.engine.cemu_dir / 'Cemu.exe'} and Vulkan (or OpenGL, whichever Cemu uses), "
-                    "then start the game once. korok can't install ReShade itself.")
+            text = (f'ReShade isn\'t set up for Cemu. korok can\'t install it itself, so do this once:<br>'
+                    f'1. On <a href="{RESHADE_URL}">reshade.me</a>, click <b>Download ReShade</b> (the plain one, '
+                    "<b>not</b> \"with full add-on support\").<br>"
+                    f"2. Run it and pick <b>{self.engine.cemu_dir / 'Cemu.exe'}</b>.<br>"
+                    "3. Rendering API: <b>Vulkan</b> (Cemu's default; pick OpenGL only if you switched Cemu's "
+                    "graphics API to OpenGL in Cemu's settings).<br>"
+                    "4. When it offers effect packages, keep the standard ones ticked: presets need those effects.<br>"
+                    "5. Start the game in Cemu once, then come back here.")
         if cur:
             text += f"<br>Preset in use: {cur}"
         self.status.setText(text)
