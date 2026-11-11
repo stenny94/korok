@@ -41,6 +41,11 @@ This was made as a stand in for BCML and UKMM because I didn't like how complica
   live save before every switch and can restore from those backups.
   If the game already has save data the first time you open it, that save is added as the
   **Main save** slot.
+  A save slot can also keep its own **Cemu graphic packs** (which packs are on and their presets)
+  and its own **ReShade preset**; they're put in place when you switch to it.
+- **ReShade presets:** keep presets in korok and switch the one Cemu's ReShade uses (or turn effects
+  off). ReShade itself is installed once with its own installer from [reshade.me](https://reshade.me);
+  korok tells you if it isn't set up.
 - **Save Editor:** view and change rupees, inventory items, and individual game flags in a save
   file, with a backup made before every write
 - Launch Cemu and BotW straight from korok
@@ -110,8 +115,9 @@ are filled in automatically when korok finds them). Then:
 | --- | --- |
 | **Mods** | Your profiles (left) and the mods in the active profile (right): turn mods on and off, change the load order, delete mods from your library. |
 | **Import** | Import mods (.bnp / .zip / .7z or a folder). |
-| **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile each slot uses. |
+| **Save Manager** | Your save slots: switch, create, rename, restore backups, and pick which profile, graphic packs and ReShade preset each slot uses. |
 | **Save Editor** | Edit rupees, items and game flags in a save. |
+| **ReShade** | Import ReShade presets, pick the one in use, or turn effects off. |
 | **Settings** | Your Cemu folder, Cemu.exe and the game (a .rpx / .wua file or the game's folder, used by **Launch BotW**), and whether switching profiles applies them to Cemu straight away. |
 
 **Apply to Cemu** (rebuild the korok Mods pack from

@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import QTabWidget
 
 from korok_engine import KorokEngine, register_bcml_protocol
 from korok_instances import InstanceManager
-from korok_tabs import InstancesTab, SaveEditorTab
+from korok_tabs import InstancesTab, ReShadeTab, SaveEditorTab
 
 
 def display_name_for(file_path: str) -> str:
@@ -368,6 +368,9 @@ class KorokUI(QMainWindow):
         self.main_tabs.addTab(import_page, "Import")
         self.main_tabs.addTab(self.instances_tab, "Save Manager")
         self.main_tabs.addTab(self.editor_tab, "Save Editor")
+        self.reshade_tab = ReShadeTab(self.engine, self.instance_mgr)
+        self.reshade_tab.changed.connect(self.instances_tab.refresh)
+        self.main_tabs.addTab(self.reshade_tab, "ReShade")
         self.settings_page = self._build_settings_page(cemu_layout)
         self.main_tabs.addTab(self.settings_page, "Settings")
         self.main_tabs.currentChanged.connect(self.on_tab_changed)
@@ -443,6 +446,8 @@ class KorokUI(QMainWindow):
             self.instances_tab.refresh()
         elif w is self.editor_tab:
             self.editor_tab.rescan()
+        elif w is self.reshade_tab:
+            self.reshade_tab.refresh()
 
     def on_path_edited(self):
         text = self.cemu_input.text().strip().strip('"')

@@ -1,7 +1,11 @@
-"""Save Manager tab and Save Editor tab for korok."""
+"""Save Manager, ReShade and Save Editor tabs for korok."""
+import os
+import subprocess
+import sys
+
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
@@ -65,8 +69,8 @@ class InstancesTab(QWidget):
         intro.setWordWrap(True)
         lay.addWidget(intro)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Active", "Save slot", "Last played"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Active", "Save slot", "Last played", "Graphics"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -74,6 +78,7 @@ class InstancesTab(QWidget):
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         lay.addWidget(self.table, stretch=1)
 
         row1 = QHBoxLayout()
@@ -88,9 +93,11 @@ class InstancesTab(QWidget):
         self.new_btn = QPushButton("New...")
         self.ren_btn = QPushButton("Rename...")
         self.pl_btn = QPushButton("Set profile...")
+        self.gfx_btn = QPushButton("Graphics...")
+        self.gfx_btn.setToolTip("Give this save slot its own Cemu graphic packs and/or ReShade preset.")
         self.del_btn = QPushButton("Delete")
         self.bak_btn = QPushButton("Restore backup...")
-        for b in (self.new_btn, self.ren_btn, self.pl_btn, self.del_btn, self.bak_btn):
+        for b in (self.new_btn, self.ren_btn, self.pl_btn, self.gfx_btn, self.del_btn, self.bak_btn):
             row2.addWidget(b)
         lay.addLayout(row2)
 
@@ -132,6 +139,7 @@ class InstancesTab(QWidget):
         self.new_btn.clicked.connect(self.new_instance)
         self.ren_btn.clicked.connect(self.rename_instance)
         self.pl_btn.clicked.connect(self.pick_playlist)
+        self.gfx_btn.clicked.connect(self.pick_graphics)
         self.del_btn.clicked.connect(self.delete_instance)
         self.bak_btn.clicked.connect(self.restore_backup)
         self.autodetect()
@@ -212,7 +220,7 @@ class InstancesTab(QWidget):
             r = self.table.rowCount()
             self.table.insertRow(r)
             vals = ["Active" if iid == act else "", d["name"],
-                    d.get("last_played", "") or "never"]
+                    d.get("last_played", "") or "never", self._graphics_text(d)]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 if c == 1:
@@ -384,6 +392,56 @@ class InstancesTab(QWidget):
             self.mgr.set_playlist(iid, pl)
             self.refresh(iid)
 
+    @staticmethod
+    def _graphics_text(d) -> str:
+        parts = []
+        if d.get("own_graphic_packs"):
+            parts.append("own graphic packs")
+        rs = d.get("reshade") or ""
+        if rs:
+            parts.append("ReShade off" if rs == ki.RESHADE_OFF else f"ReShade: {rs}")
+        return ", ".join(parts) or "shared"
+
+    def pick_graphics(self):
+        iid = self.need()
+        if not iid:
+            return
+        d = self.mgr.info(iid)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Graphics for {d['name']}")
+        lay = QVBoxLayout(dlg)
+        own = QCheckBox("Keep its own Cemu graphic packs (which packs are on, and their presets)")
+        own.setChecked(bool(d.get("own_graphic_packs")))
+        lay.addWidget(own)
+        note = QLabel("Whatever you set in Cemu's Graphic packs window while playing this slot is kept "
+                      "for it and put back when you switch to it. The korok Mods pack isn't affected. "
+                      "Slots without this share Cemu's settings.")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        form = QFormLayout()
+        combo = QComboBox()
+        choices = [("(leave ReShade as it is)", ""), ("Off (no effects)", ki.RESHADE_OFF)] + \
+                  [(n, n) for n in self.mgr.reshade_presets()]
+        for label, value in choices:
+            combo.addItem(label, value)
+        combo.setCurrentIndex(max(0, next((i for i, (_, v) in enumerate(choices)
+                                            if v == (d.get("reshade") or "")), 0)))
+        form.addRow("ReShade preset:", combo)
+        lay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.mgr.set_graphics(iid, own.isChecked(), combo.currentData())
+        if iid == self.mgr.active() and combo.currentData():
+            try:
+                self.mgr.use_reshade_preset(combo.currentData())
+            except Exception as e:
+                self.error(e)
+        self.refresh(iid)
+
     def delete_instance(self):
         iid = self.need()
         if not iid:
@@ -418,6 +476,110 @@ class InstancesTab(QWidget):
 
 
 # ===================================================================== #
+RESHADE_URL = "https://reshade.me"
+
+
+class ReShadeTab(QWidget):
+    """ReShade presets kept by korok (korok_reshade/), and which one Cemu's ReShade uses."""
+    changed = pyqtSignal()
+
+    def __init__(self, engine, mgr, parent=None):
+        super().__init__(parent)
+        self.engine, self.mgr = engine, mgr
+        lay = QVBoxLayout(self)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        self.status.setOpenExternalLinks(True)
+        lay.addWidget(self.status)
+        lay.addWidget(QLabel("Presets kept by korok:"))
+        self.list = QListWidget()
+        lay.addWidget(self.list, stretch=1)
+        row = QHBoxLayout()
+        self.import_btn = QPushButton("Import preset (.ini)...")
+        self.use_btn = QPushButton("Use now")
+        self.use_btn.setToolTip("Point Cemu's ReShade at this preset right away.")
+        self.off_btn = QPushButton("Turn effects off")
+        self.del_btn = QPushButton("Delete")
+        self.open_btn = QPushButton("Open presets folder")
+        for b in (self.import_btn, self.use_btn, self.off_btn, self.del_btn, self.open_btn):
+            row.addWidget(b)
+        lay.addLayout(row)
+        hint = QLabel("Each save slot can pick its own preset (Save Manager > Graphics...). Presets need "
+                      "the effect files (.fx) they use, which ReShade's installer downloads.")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        self.import_btn.clicked.connect(self.import_preset)
+        self.use_btn.clicked.connect(lambda: self.use(self.selected()))
+        self.off_btn.clicked.connect(lambda: self.use(ki.RESHADE_OFF))
+        self.del_btn.clicked.connect(self.delete)
+        self.open_btn.clicked.connect(self.open_folder)
+        self.refresh()
+
+    def selected(self):
+        it = self.list.currentItem()
+        return it.text() if it else None
+
+    def refresh(self):
+        st = self.mgr.reshade_status()
+        ini = self.mgr.reshade_ini()
+        cur = self.mgr.current_reshade_preset()
+        if st == "installed":
+            text = f"ReShade is set up for Cemu ({ini})."
+        elif st == "maybe":
+            text = ("ReShade looks installed, but hasn't run with Cemu yet. Start the game once so it "
+                    f"creates {ini.name}; korok can then switch presets.")
+        else:
+            text = (f'ReShade isn\'t set up for Cemu. Install it from <a href="{RESHADE_URL}">reshade.me</a>: '
+                    f"pick {self.engine.cemu_dir / 'Cemu.exe'} and Vulkan (or OpenGL, whichever Cemu uses), "
+                    "then start the game once. korok can't install ReShade itself.")
+        if cur:
+            text += f"<br>Preset in use: {cur}"
+        self.status.setText(text)
+        keep = self.selected()
+        self.list.clear()
+        for n in self.mgr.reshade_presets():
+            self.list.addItem(n)
+            if n == keep:
+                self.list.setCurrentRow(self.list.count() - 1)
+
+    def import_preset(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "ReShade presets", "", "ReShade preset (*.ini)")
+        for p in paths:
+            try:
+                self.mgr.import_reshade_preset(p)
+            except Exception as e:
+                QMessageBox.warning(self, "ReShade", f"Couldn't import {p}: {e}")
+        self.refresh()
+        self.changed.emit()
+
+    def use(self, name):
+        if not name:
+            QMessageBox.information(self, "ReShade", "Select a preset first.")
+            return
+        try:
+            self.mgr.use_reshade_preset(name)
+        except Exception as e:
+            QMessageBox.warning(self, "ReShade", str(e))
+        self.refresh()
+
+    def delete(self):
+        name = self.selected()
+        if not name:
+            return
+        if QMessageBox.question(self, "ReShade", f'Delete the preset "{name}" from korok?') \
+                == QMessageBox.StandardButton.Yes:
+            self.mgr.delete_reshade_preset(name)
+            self.refresh()
+            self.changed.emit()
+
+    def open_folder(self):
+        ki.RESHADE_DIR.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(str(ki.RESHADE_DIR))
+        else:
+            subprocess.Popen(["xdg-open", str(ki.RESHADE_DIR)])
+
+
 class SaveEditorTab(QWidget):
     def __init__(self, engine, mgr, parent=None):
         super().__init__(parent)
