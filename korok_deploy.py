@@ -1,6 +1,6 @@
-"""Builds Korok's graphic pack from the enabled mods: UKMM's deploy.
+"""Builds korok's graphic pack from the enabled mods: UKMM's deploy.
 
-Every mod in Korok's library is a UKMM package (see korok_library). To deploy,
+Every mod in korok's library is a UKMM package (see korok_library). To deploy,
 each file any enabled mod lists is rebuilt from vanilla with every mod's
 version folded in, in load order (ModUnpacker::build_file), then written to
 the graphic pack's content/ or aoc/0010/. Afterwards the game's resource size
@@ -50,8 +50,9 @@ class MultiPackage:
             p.close()
 
 
-def deploy(mods, dump: Dump, out_dir, progress=None, log=None):
+def deploy(mods, dump: Dump, out_dir, progress=None, log=None, rstb_floor=None):
     """mods: [(package path, [option paths]), ...] in load order (last wins).
+    rstb_floor: {canonical name: size} lowest size-table values to use (from BNPs' rstb.json).
     Writes out_dir/content and out_dir/aoc/0010. Returns the Converter
     (.built, .unsupported, .problems, .rstb)."""
     if not (dump.dirs[1] or dump.dirs[2]):
@@ -83,6 +84,10 @@ def deploy(mods, dump: Dump, out_dir, progress=None, log=None):
                 conv.rstb[f"Message/Msg_{lang}.product.sarc"] = korok_rstb.calc_from_size(len(unyaz(msg)), "Msg.sarc")
         table = korok_rstb.load_vanilla(dump, dump.dirs[1])
         if table is not None and conv.rstb:
+            # sizes BCML worked out for a BNP's own files (its rstb.json) are kept as a minimum
+            for k, v in (rstb_floor or {}).items():
+                if k in conv.rstb and v > (conv.rstb[k] or 0):
+                    conv.rstb[k] = v
             table.apply(conv.rstb)
             korok_rstb.write(table, out_dir / "content")
         elif table is None and conv.rstb:

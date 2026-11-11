@@ -8,7 +8,7 @@ UKMM's ResourceData:
   Sarc        the archive's file list, as a diff against vanilla
   Mergeable   the parsed resource, as a diff against vanilla (or in full when new)
 
-Korok stores every mod this way, whatever it was imported from (UKMM package,
+korok stores every mod this way, whatever it was imported from (UKMM package,
 BCML BNP, graphic pack), so mods are merged together the way UKMM merges them.
 
 Port of UKMM (https://github.com/NiceneNerd/ukmm, GPL-3.0) by Nicene Nerd.
@@ -136,7 +136,7 @@ def resource_from_binary(name, data):
         try:
             return ("Mergeable", kind, D.from_binary(kind, data))
         except D.NoDiff:
-            return ("Mergeable", "BinaryOverride", [data, f"{kind} is not merged by Korok yet"])
+            return ("Mergeable", "BinaryOverride", [data, f"{kind} is not merged by korok yet"])
         except Exception as e:  # noqa: BLE001 - UKMM keeps unparsable files as-is too
             return ("Mergeable", "BinaryOverride", [data, f"{type(e).__name__}: {e}"])
     if is_mergeable_sarc(name, data):

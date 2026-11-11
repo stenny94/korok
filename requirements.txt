@@ -1,4 +1,4 @@
-# Korok - Python dependencies (Windows, Python 3.10+)
+# korok - Python dependencies (Windows, Python 3.10+)
 # Install with:  pip install -r requirements.txt
 
 PyQt6>=6.5          # GUI
@@ -6,5 +6,5 @@ oead>=1.2           # BYML / AAMP / SARC / Yaz0 handling (mods, packs, save edit
 PyYAML>=6.0         # UKMM package metadata, game text
 pymsyt>=0.1.4       # bundled msyt tool, needed for game text (dialogue)
 py7zr>=0.20         # import of .7z mod archives
-cbor2>=5.4           # UKMM mod packages (Korok stores every mod as one)
+cbor2>=5.4           # UKMM mod packages (korok stores every mod as one)
 zstandard>=0.19      # UKMM mod packages

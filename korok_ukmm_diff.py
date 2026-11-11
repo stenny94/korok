@@ -438,7 +438,7 @@ def bymldata_to_cbor(h, fields):
 
 class FrozenMap(dict):
     """A hashable dict, for struct keys in CBOR maps (cbor2 writes it as a plain map).
-    cbor2's own frozendict class has a different name in every release, so Korok uses this."""
+    cbor2's own frozendict class has a different name in every release, so korok uses this."""
 
     def __hash__(self):
         return hash(tuple(sorted(self.items())))

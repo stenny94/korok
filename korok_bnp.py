@@ -878,7 +878,7 @@ def convert_bnp_folder(root: pathlib.Path, dump: Dump, lang="USen", log=None) ->
     """Converts an extracted BNP in place. Returns its UKMM meta."""
     root = pathlib.Path(root)
     if (root / "rules.txt").exists() and not (root / "info.json").exists():
-        raise BnpError("This is a BCML 2.x mod package, which Korok can't convert. "
+        raise BnpError("This is a BCML 2.x mod package, which korok can't convert. "
                        "Open it in BCML 3 once to upgrade it, or use a newer release of the mod.")
     BnpConverter(root, dump, lang, log).convert()
     info = json.loads((root / "info.json").read_text(encoding="utf-8-sig"))

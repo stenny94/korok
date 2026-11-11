@@ -1,4 +1,4 @@
-"""Korok save engine: read and edit BotW `game_data.sav` files.
+"""korok save engine: read and edit BotW `game_data.sav` files.
 
 Design notes
 ------------

@@ -1,6 +1,6 @@
-"""Korok's mod library and pack builder.
+"""korok's mod library and pack builder.
 
-Every mod Korok imports is turned into a UKMM mod package (see korok_pack) and
+Every mod korok imports is turned into a UKMM mod package (see korok_pack) and
 kept in the library (korok_library/<name>/mod.zip):
 
   UKMM package (.zip)     kept as it is
@@ -51,16 +51,17 @@ BUILD_LOG = LOGS_DIR / "korok_build.log"
 LIBRARY_DIR = BASE_DIR / "korok_library"
 PACKAGE_NAME = "mod.zip"
 META_NAME = "korok.json"
+BNP_RSTB_NAME = "bcml_rstb.json"    # a BNP's own size-table values
 PACK_FOLDER_NAME = "KorokMods"
 GAME_DIRS = {"content", "aoc"}
-BUILD_VERSION = "8"
+BUILD_VERSION = "9"
 UPDATE_TITLE_IDS = ("101c9400", "101c9500", "101c9300")
 CODE_FILES = ("korok_engine.py", "korok_deploy.py", "korok_ukmm_native.py", "korok_ukmm_formats.py",
               "korok_rstb.py")
 
 
 def register_bcml_protocol():
-    """Registers 'bcml://' so GameBanana 1-click links open Korok.
+    """Registers 'bcml://' so GameBanana 1-click links open korok.
     Note: this replaces BCML's registration for the current user."""
     if sys.platform != "win32" or winreg is None:
         return
@@ -149,7 +150,7 @@ class KorokEngine:
         self.user_dir = self.resolve_user_dir()
         self.graphic_packs_dir = self.user_dir / "graphicPacks" / PACK_FOLDER_NAME
 
-        # Every place an older Korok version (or this one) may have written
+        # Every place an older korok version (or this one) may have written
         # a pack, so Cemu never sees two copies.
         candidates = []
         for base in {self.cemu_dir, self.user_dir}:
@@ -168,9 +169,9 @@ class KorokEngine:
     def generate_rules_txt(self) -> str:
         return f"""[Definition]
 titleIds = {BOTW_TITLE_IDS}
-name = "Korok Mods"
-path = "The Legend of Zelda: Breath of the Wild/Mods/Korok Mods"
-description = "Consolidated package containing all active Korok mods managed by Korok."
+name = "korok Mods"
+path = "The Legend of Zelda: Breath of the Wild/Mods/korok Mods"
+description = "Consolidated package containing all active korok mods managed by korok."
 version = 7
 default = true
 """
@@ -181,7 +182,7 @@ default = true
         dump = native.dump_from_cemu(self.user_dir)
         if not (dump.dirs[1] or dump.dirs[2]):
             raise RuntimeError(
-                "The game's files weren't found in Cemu's mlc01 folder. Korok needs the base game "
+                "The game's files weren't found in Cemu's mlc01 folder. korok needs the base game "
                 "and the v208 update installed in Cemu (and the DLC, if you have it), and your Cemu "
                 "folder set on the Settings tab.")
         return dump
@@ -302,7 +303,7 @@ default = true
         import korok_bnp
         import korok_pack
         if not native.available():
-            raise RuntimeError("Korok needs a few Python packages to read mods. Run:  pip install " +
+            raise RuntimeError("korok needs a few Python packages to read mods. Run:  pip install " +
                                " ".join(native.missing_requirements() or ["oead", "cbor2", "zstandard"]))
         if not _option_of:
             self.import_notes = []
@@ -378,11 +379,15 @@ default = true
             shutil.move(str(tmp_pkg), str(dest / PACKAGE_NAME))
             self._write_meta(dest, {"name": name, "source": kind, "options": chosen,
                                     "file": archive_path.name, "kept_whole": len(packer.kept_whole)})
+            floor = self._bnp_rstb(src, chosen) if kind.startswith("BCML") else {}
+            (dest / BNP_RSTB_NAME).unlink(missing_ok=True)
+            if floor:
+                (dest / BNP_RSTB_NAME).write_text(json.dumps(floor), encoding="utf-8")
             if groups:
                 labels = {o["path"]: o["name"] for g in groups for o in g["options"]}
                 self.import_notes.append("Options used: " + (", ".join(labels.get(o, o) for o in chosen)
                                                              or "none") + ".")
-            whole = sorted({c.rpartition(".")[2] for c, why in packer.kept_whole if "not merged by Korok" in why})
+            whole = sorted({c.rpartition(".")[2] for c, why in packer.kept_whole if "not merged by korok" in why})
             if whole:
                 self.import_notes.append(
                     "Some of its files can't be merged with other mods yet and are used whole "
@@ -410,6 +415,21 @@ default = true
         finally:
             shutil.rmtree(work, ignore_errors=True)
         return warnings
+
+    @staticmethod
+    def _bnp_rstb(root: pathlib.Path, options) -> dict:
+        """BCML's own size-table values for a BNP's files (logs/rstb.json, then each chosen option's)."""
+        out = {}
+        for logs in [root / "logs"] + [root / "options" / o / "logs" for o in options or []]:
+            try:
+                data = json.loads((logs / "rstb.json").read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                        out[str(k).replace("\\", "/")] = v
+        return out
 
     def _finish_import(self, name, was_known, enable):
         self.last_imported_name = name
@@ -726,7 +746,15 @@ default = true
         out.mkdir()
         conv = None
         if mods:
-            conv = korok_deploy.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"))
+            floor = {}
+            for n in names:
+                try:
+                    for k, v in json.loads((self.staging_dir / n / BNP_RSTB_NAME).read_text(encoding="utf-8")).items():
+                        floor[k] = max(floor.get(k, 0), int(v))
+                except Exception:
+                    pass
+            conv = korok_deploy.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"),
+                                       rstb_floor=floor)
         (out / "rules.txt").write_text(self.generate_rules_txt(), encoding="utf-8")
         for legacy in self.legacy_pack_dirs:
             if legacy.name == PACK_FOLDER_NAME and legacy.exists():

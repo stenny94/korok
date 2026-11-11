@@ -304,7 +304,7 @@ class Dump:
 
     @classmethod
     def from_vanilla_roots(cls, roots: dict):
-        """Korok's _vanilla_roots(): content roots list update dirs (0005000e) before base
+        """korok's _vanilla_roots(): content roots list update dirs (0005000e) before base
         (00050000); aoc roots end in content/0010."""
         update = [r for r in roots.get("content", []) if "0005000e" in str(r).lower()]
         base = [r for r in roots.get("content", []) if "00050000" in str(r).lower().replace("\\", "/").split("/title/")[-1][:8]]
@@ -570,14 +570,9 @@ class Converter:
         return data
 
     def alignment(self, name, aoc) -> int:
-        """Keep the game's Yaz0 alignment for a file (models and textures need theirs:
-        GX2 texture data read from a wrongly aligned buffer comes out garbled). New
-        models/textures get 0x2000, the largest the game uses; more never hurts."""
+        """The data alignment the game's own Yaz0 header has for this file (usually 0)."""
         path = f"Aoc/0010/{name}" if aoc and not name.startswith("Aoc/0010/") else name
-        a = self.dump.yaz0_alignment(path)
-        if not a and name.endswith(".sbfres"):
-            a = 0x2000
-        return a
+        return self.dump.yaz0_alignment(path)
 
     def _rstb(self, canon, value):
         import korok_rstb
@@ -838,7 +833,7 @@ def merge_plist_cbor(base: dict, diff: dict) -> dict:
     return {"lists": lists, "objects": objs}
 
 
-# ------------------------------------------------------------- entry point for Korok
+# ------------------------------------------------------------- entry point for korok
 def dump_from_cemu(user_dir, title_ids=("101c9400", "101c9500", "101c9300")):
     title = pathlib.Path(user_dir) / "mlc01" / "usr" / "title"
     base = [title / "00050000" / t / "content" for t in title_ids]
