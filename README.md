@@ -134,17 +134,23 @@ are filled in automatically when korok finds them). Then:
 ## Compatibility
 
 Mods I have tested with korok. This is a small list, so a mod not being here doesn't mean it won't
-work. Mod handling was rebuilt from scratch, so everything below needs retesting.
+work.
 
-### Tested with earlier versions
+### Working
 
 | Mod | Author | Notes |
 | --- | --- | --- |
-| [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Worked |
-| [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Worked |
-| [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Worked |
-| Zelda's Ballad | | Zelda had no hair and garbled textures. Needs retesting |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | BNP version got stuck on a black loading screen. Needs retesting |
+| [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Works |
+| [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Works |
+| [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Works |
+| Zelda's Ballad | | Works (BNP versions), including hair and textures |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | UKMM version works |
+
+### Not working
+
+| Mod | Author | Notes |
+| --- | --- | --- |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | BNP version: not working yet. Use the UKMM version |
 
 ## Troubleshooting
 
