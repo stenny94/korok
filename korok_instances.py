@@ -191,6 +191,21 @@ class InstanceManager:
         self._save()
         return iid
 
+    MAIN_NAME = "Main save"
+
+    def ensure_main(self):
+        """First run: if the game already has save data and there are no save slots yet,
+        make that save the "Main save" slot (and the active one) so it's managed from the
+        start. The live save itself isn't touched. Returns the new slot id, or None."""
+        if self.data["instances"] or self.active():
+            return None
+        if _tree_files(self.live_save_dir()) == 0:
+            return None
+        iid = self.create(self.MAIN_NAME, "current")
+        self.data["active"] = iid
+        self._save()
+        return iid
+
     def rename(self, iid, name):
         name = name.strip()
         if not name:

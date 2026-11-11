@@ -199,6 +199,10 @@ class InstancesTab(QWidget):
         QMessageBox.warning(self, "Save Manager", str(e))
 
     def refresh(self, select=None):
+        try:
+            self.mgr.ensure_main()      # first run: adopt the game's existing save as "Main save"
+        except Exception:
+            pass
         keep = select or self.selected()
         self.table.setRowCount(0)
         act = self.mgr.active()
