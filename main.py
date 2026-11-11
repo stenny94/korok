@@ -311,12 +311,12 @@ class KorokUI(QMainWindow):
         layout.addWidget(splitter, stretch=1)
 
         self.pending_label = QLabel(
-            "Changes not applied yet - press <b>Apply to Cemu</b> on the Import tab.")
+            "Changes not applied yet - press <b>Apply to Cemu</b> below.")
         self.pending_label.setStyleSheet("color: #b36b00;")
         self.pending_label.setVisible(False)
         layout.addWidget(self.pending_label)
 
-        # ================= Import tab: import, apply, rebuild =================
+        # ================= Import tab: import mods =================
         imp = QVBoxLayout()
         intro = QLabel(
             "Import mods into your library (.bnp, .zip, .7z, UKMM packages, or an unpacked folder). "
@@ -340,8 +340,12 @@ class KorokUI(QMainWindow):
 
         imp.addStretch(1)
 
+        # Apply / Force rebuild: shown under every tab except Settings
+        self.apply_bar = QWidget()
+        apply_bar_layout = QVBoxLayout(self.apply_bar)
+        apply_bar_layout.setContentsMargins(0, 0, 0, 0)
         self.import_profile_label = QLabel()
-        imp.addWidget(self.import_profile_label)
+        apply_bar_layout.addWidget(self.import_profile_label)
         apply_row = QHBoxLayout()
         self.apply_btn = QPushButton(self.NORMAL_TEXT)
         self.apply_btn.setMinimumHeight(40)
@@ -352,7 +356,7 @@ class KorokUI(QMainWindow):
         self.force_btn.clicked.connect(self.force_rebuild)
         apply_row.addWidget(self.apply_btn, stretch=3)
         apply_row.addWidget(self.force_btn, stretch=1)
-        imp.addLayout(apply_row)
+        apply_bar_layout.addLayout(apply_row)
         import_page = QWidget()
         import_page.setLayout(imp)
 
@@ -369,6 +373,8 @@ class KorokUI(QMainWindow):
         self.main_tabs.addTab(self.settings_page, "Settings")
         self.main_tabs.currentChanged.connect(self.on_tab_changed)
         outer.addWidget(self.main_tabs, stretch=1)
+        outer.addWidget(self.apply_bar)
+        self.on_tab_changed(self.main_tabs.currentIndex())
 
         main_widget.setLayout(outer)
         self.setCentralWidget(main_widget)
@@ -432,6 +438,7 @@ class KorokUI(QMainWindow):
 
     def on_tab_changed(self, idx):
         w = self.main_tabs.widget(idx)
+        self.apply_bar.setVisible(w is not self.settings_page)
         if w is self.instances_tab:
             self.instances_tab.refresh()
         elif w is self.editor_tab:
@@ -473,8 +480,6 @@ class KorokUI(QMainWindow):
         self.pending_label.setVisible(bool(pending))
         self.import_profile_label.setText(f"Active profile: <b>{self.engine.active_profile}</b>  "
                                           f"({len(self.engine.profile_mods())} mod(s) on)")
-        if hasattr(self, "main_tabs"):
-            self.main_tabs.setTabText(1, "Import  \u25cf" if pending else "Import")
 
     def refresh_tree(self):
         self.tree.blockSignals(True)
