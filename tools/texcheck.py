@@ -52,18 +52,19 @@ def from_pack(pack_bytes, name):
     return None, None
 
 
-def find(root: pathlib.Path, name: str):
-    """(data, label, offset) for a file loose under content/ or inside one of the packs."""
+def find_all(root: pathlib.Path, name: str):
+    """[(data, label, offset)] for every copy: loose under content/ and inside each pack."""
+    out = []
     loose = root / "content" / name
     if loose.is_file():
-        return loose.read_bytes(), "loose", None
+        out.append((loose.read_bytes(), "loose", None))
     for pack in PACKS:
         p = root / "content" / pack
         if p.is_file():
             data, off = from_pack(p.read_bytes(), name)
             if data is not None:
-                return data, f"in {pack}", off
-    return None, "missing", None
+                out.append((data, f"in {pack}", off))
+    return out or [(None, "missing", None)]
 
 
 def main(mod, *models):
@@ -102,10 +103,10 @@ def main(mod, *models):
                         if (d / name).is_file():
                             print("  " + describe((d / name).read_bytes(), "game  loose"))
                             break
-                d, label, off = find(root, name)
-                print("  " + describe(d, f"mod   {label}", off))
-                d, label, off = find(pack, name)
-                print("  " + describe(d, f"korok {label}", off))
+                for d, label, off in find_all(root, name):
+                    print("  " + describe(d, f"mod   {label}", off))
+                for d, label, off in find_all(pack, name):
+                    print("  " + describe(d, f"korok {label}", off))
                 print(f"  size table: game {vanilla_table.get(canon) if vanilla_table else '?'}, "
                       f"mod's rstb.json {rstb_log.get(canon, '-')}, korok {table.get(canon) if table else '?'}")
     finally:
