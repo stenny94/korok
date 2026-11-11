@@ -150,8 +150,8 @@ work.
 | [The Linkle Mod 3.0](https://gamebanana.com/mods/406768) | lynard killer | Works |
 | [Unofficial Linkle 3.0 Armor Icons](https://gamebanana.com/mods/408713) | Benna96 | Works |
 | [The Legend of Linkle Dialogue Mod](https://gamebanana.com/mods/439900) | TheFork | Works |
-| Zelda's Ballad | | Works (BNP versions), including hair and textures |
-| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | UKMM version works |
+| Zelda's Ballad | YamGaming | Works (BNP version) |
+| [Second Wind: The Ancient Trials](https://gamebanana.com/projects/35468) | CEObrainz | Works (UKMM version) |
 
 ### Not working
 
