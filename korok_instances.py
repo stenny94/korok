@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+import xml.etree.ElementTree as ET
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 CONFIG_DIR = BASE_DIR / "config"
@@ -24,6 +25,9 @@ if _old.exists() and not INSTANCES_FILE.exists():
     except OSError:
         pass
 INSTANCES_DIR = BASE_DIR / "korok_instances"
+RESHADE_DIR = BASE_DIR / "korok_reshade"          # ReShade presets kept by korok
+RESHADE_OFF = "__off__"                            # slot setting: ReShade with no effects
+OFF_PRESET = "korok_off.ini"                       # an empty preset (no effects turned on)
 BACKUPS_DIR = BASE_DIR / "korok_backups"
 KEEP_BACKUPS = 15
 TITLE_LOWS = ("101c9400", "101c9500", "101c9300")  # USA, EUR, JPN
@@ -248,6 +252,7 @@ class InstanceManager:
         a = self.active()
         if not a:
             return False
+        self.remember_graphics(a)
         live = self.live_save_dir()
         if not live.exists() or _tree_files(live) == 0:
             return False       # never replace a stored save with an empty one
@@ -285,11 +290,204 @@ class InstanceManager:
         self.data["active"] = iid
         self.data["instances"][iid]["last_played"] = time.strftime("%Y-%m-%d %H:%M")
         self._save()
+        try:
+            notes += self.apply_graphics(iid)
+        except Exception as e:
+            notes.append(f"Graphics settings weren't changed: {e}")
         pl = self.data["instances"][iid].get("playlist")
         if apply_playlist and pl and pl in self.engine.profile_names():
             self.engine.set_active_profile(pl)
             notes.append(f'Playlist set to "{pl}".')
         return " ".join(notes) or "Switched."
+
+    # ------------------------------------------- graphic packs / ReShade --
+    # Cemu keeps which graphic packs are on, and the preset picked for each, in the
+    # <GraphicPack> element of its settings.xml (rewritten when Cemu closes, so only
+    # touched while Cemu is closed). A save slot with its own graphic packs keeps a
+    # copy of that element; korok's own pack entry always stays as it is.
+    def cemu_settings_file(self) -> pathlib.Path:
+        return self.engine.user_dir / "settings.xml"
+
+    def read_graphic_packs(self):
+        """The <GraphicPack> element of Cemu's settings.xml as text, or None if unreadable."""
+        p = self.cemu_settings_file()
+        if not p.is_file():
+            return None
+        el = ET.parse(p).getroot().find("GraphicPack")
+        return ET.tostring(el, encoding="unicode") if el is not None else "<GraphicPack />"
+
+    @staticmethod
+    def _is_korok_entry(entry) -> bool:
+        return "/korokmods/" in entry.get("filename", "").replace("\\", "/").lower()
+
+    def write_graphic_packs(self, xml_text: str):
+        p = self.cemu_settings_file()
+        tree = ET.parse(p)
+        root = tree.getroot()
+        old = root.find("GraphicPack")
+        new = ET.fromstring(xml_text)
+        if old is not None:
+            # keep the korok Mods pack exactly as it is now
+            for e in [e for e in new if self._is_korok_entry(e)]:
+                new.remove(e)
+            for e in old:
+                if self._is_korok_entry(e):
+                    new.append(e)
+            root[list(root).index(old)] = new
+        else:
+            root.append(new)
+        BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, BACKUPS_DIR / f"cemu_settings_{time.strftime('%Y%m%d-%H%M%S')}.xml")
+        olds = sorted(BACKUPS_DIR.glob("cemu_settings_*.xml"))
+        for f in olds[:-KEEP_BACKUPS]:
+            f.unlink(missing_ok=True)
+        ET.indent(tree)
+        tmp = p.with_suffix(".korok_tmp")
+        tree.write(tmp, encoding="utf-8", xml_declaration=True)
+        os.replace(tmp, p)
+
+    def set_graphics(self, iid, own_packs: bool, reshade: str):
+        d = self.data["instances"][iid]
+        d["own_graphic_packs"] = bool(own_packs)
+        d["reshade"] = reshade or ""
+        if own_packs and not d.get("graphic_packs") and iid == self.active():
+            self.remember_graphics(iid)
+        self._save()
+
+    def remember_graphics(self, iid):
+        """Store Cemu's current graphic pack choices in the slot (if it keeps its own)."""
+        d = self.data["instances"].get(iid)
+        if not d or not d.get("own_graphic_packs"):
+            return
+        try:
+            xml_text = self.read_graphic_packs()
+        except Exception:
+            return
+        if xml_text is not None:
+            d["graphic_packs"] = xml_text
+            self._save()
+
+    def apply_graphics(self, iid) -> list:
+        """Put the slot's graphic packs and ReShade preset in place. Returns notes."""
+        notes = []
+        d = self.data["instances"][iid]
+        if d.get("own_graphic_packs"):
+            if d.get("graphic_packs"):
+                if self.cemu_settings_file().is_file():
+                    self.write_graphic_packs(d["graphic_packs"])
+                    notes.append("Graphic packs set for this slot.")
+            else:
+                self.remember_graphics(iid)      # first time: start from the current choices
+        rs = d.get("reshade") or ""
+        if rs:
+            self.use_reshade_preset(rs)
+            notes.append("ReShade: " + ("off." if rs == RESHADE_OFF else f'preset "{rs}".'))
+        return notes
+
+    def reshade_ini(self) -> pathlib.Path:
+        exe = self.cemu_exe()
+        folder = pathlib.Path(exe).parent if exe else self.engine.cemu_dir
+        return folder / "ReShade.ini"
+
+    def reshade_status(self) -> str:
+        """'installed', 'maybe' (ReShade found but not run with Cemu yet) or 'missing'."""
+        ini = self.reshade_ini()
+        if ini.is_file():
+            return "installed"
+        folder = ini.parent
+        if any((folder / n).is_file() for n in ("opengl32.dll", "dxgi.dll", "ReShade64.dll")):
+            return "maybe"
+        if sys.platform == "win32":
+            try:
+                import winreg
+                for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                    try:
+                        with winreg.OpenKey(hive, r"SOFTWARE\Khronos\Vulkan\ImplicitLayers") as k:
+                            i = 0
+                            while True:
+                                name = winreg.EnumValue(k, i)[0]
+                                if "reshade" in name.lower():
+                                    return "maybe"
+                                i += 1
+                    except OSError:
+                        continue
+            except Exception:
+                pass
+        return "missing"
+
+    @staticmethod
+    def reshade_presets() -> list:
+        if not RESHADE_DIR.is_dir():
+            return []
+        return sorted(p.stem for p in RESHADE_DIR.glob("*.ini") if p.name != OFF_PRESET)
+
+    @staticmethod
+    def import_reshade_preset(path) -> str:
+        src = pathlib.Path(path)
+        RESHADE_DIR.mkdir(parents=True, exist_ok=True)
+        dst = RESHADE_DIR / src.name
+        if src.resolve() != dst.resolve():
+            shutil.copy2(src, dst)
+        return dst.stem
+
+    def delete_reshade_preset(self, name: str):
+        (RESHADE_DIR / f"{name}.ini").unlink(missing_ok=True)
+        for d in self.data["instances"].values():
+            if d.get("reshade") == name:
+                d["reshade"] = ""
+        self._save()
+
+    def current_reshade_preset(self):
+        """Path ReShade.ini points at (PresetPath), or None."""
+        ini = self.reshade_ini()
+        if not ini.is_file():
+            return None
+        section = ""
+        for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                section = s[1:-1].strip().upper()
+            elif section == "GENERAL" and s.split("=", 1)[0].strip().lower() == "presetpath":
+                return s.split("=", 1)[1].strip() or None
+        return None
+
+    def use_reshade_preset(self, name: str):
+        """Point ReShade.ini (next to Cemu.exe) at a korok preset, or at an empty one (off)."""
+        RESHADE_DIR.mkdir(parents=True, exist_ok=True)
+        if name == RESHADE_OFF:
+            target = RESHADE_DIR / OFF_PRESET
+            if not target.exists():
+                target.write_text("Techniques=\nTechniqueSorting=\n", encoding="utf-8")
+        else:
+            target = RESHADE_DIR / f"{name}.ini"
+            if not target.is_file():
+                raise InstanceError(f'The ReShade preset "{name}" is missing from {RESHADE_DIR}.')
+        ini = self.reshade_ini()
+        lines = ini.read_text(encoding="utf-8", errors="replace").splitlines() if ini.is_file() else []
+        out, section, done, general_at = [], "", False, None
+        for line in lines:
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                if section == "GENERAL" and not done:
+                    out.append(f"PresetPath={target}")
+                    done = True
+                section = s[1:-1].strip().upper()
+                if section == "GENERAL":
+                    general_at = len(out)
+            elif section == "GENERAL" and s.split("=", 1)[0].strip().lower() == "presetpath":
+                if not done:
+                    out.append(f"PresetPath={target}")
+                    done = True
+                continue
+            out.append(line)
+        if not done:
+            if general_at is None:
+                out += (["", "[GENERAL]"] if out else ["[GENERAL]"])
+                out.append(f"PresetPath={target}")
+            elif section == "GENERAL":
+                out.append(f"PresetPath={target}")
+        ini.parent.mkdir(parents=True, exist_ok=True)
+        ini.write_text("\n".join(out) + "\n", encoding="utf-8")
 
     # ----------------------------------------------------------- launch --
     @staticmethod
