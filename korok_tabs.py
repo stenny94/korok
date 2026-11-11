@@ -109,7 +109,7 @@ class InstancesTab(QWidget):
         for e in (self.exe_edit, self.game_edit):
             e.editingFinished.connect(self._store_launch)
 
-        # launch bar: shown above the tabs by the main window
+        # launch bar: shown below the tabs by the main window
         box = QWidget()
         self.launch_box = box
         r = QHBoxLayout(box)
@@ -119,8 +119,9 @@ class InstancesTab(QWidget):
         self.botw_btn = QPushButton("Launch BotW")
         self.botw_btn.setToolTip("Starts Cemu and loads the game set on the Settings tab straight away.")
         self.botw_btn.clicked.connect(lambda: self.launch_cemu(True))
-        r.addWidget(self.launch_btn, 1)
-        r.addWidget(self.botw_btn, 1)
+        for b in (self.launch_btn, self.botw_btn):
+            b.setMinimumHeight(40)
+            r.addWidget(b, 1)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
