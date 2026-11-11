@@ -162,8 +162,6 @@ work.
 ## Troubleshooting
 
 - **`python` is not recognised**: reinstall Python with *Add to PATH* ticked, or use `py main.py`.
-- **A build fails or the game crashes**: send `korok_build.log` and `korok_import.log` from the
-  korok `logs` folder when asking for help.
 - **`pip install -r requirements.txt` fails on one package**: install the rest by name, e.g.
   `pip install cbor2 zstandard pymsyt`.
 
