@@ -65,7 +65,11 @@ def register_bcml_protocol():
     if sys.platform != "win32" or winreg is None:
         return
 
-    command_str = f'"{sys.executable}" "{pathlib.Path(sys.argv[0]).resolve()}" "%1"'
+    # pythonw.exe runs korok without a console window
+    exe = pathlib.Path(sys.executable)
+    if exe.name.lower() == "python.exe" and (exe.parent / "pythonw.exe").exists():
+        exe = exe.parent / "pythonw.exe"
+    command_str = f'"{exe}" "{pathlib.Path(sys.argv[0]).resolve()}" "%1"'
     protocol_key = r"Software\Classes\bcml"
 
     try:
@@ -210,7 +214,8 @@ default = true
         try:
             res = subprocess.run(
                 ["7z", "x", str(archive_path), f"-o{target_dir}", "-y"],
-                capture_output=True,
+                capture_output=True, stdin=subprocess.DEVNULL,
+                creationflags=0x08000000 if os.name == "nt" else 0,   # CREATE_NO_WINDOW
             )
             ok = res.returncode == 0
         except FileNotFoundError:

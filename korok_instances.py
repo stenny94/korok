@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+import zipfile
 import xml.etree.ElementTree as ET
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -147,9 +148,12 @@ class InstanceManager:
         return dst
 
     def _prune_backups(self):
+        """Keep the newest KEEP_BACKUPS save backups; kept (pinned) ones never count or go."""
         if not BACKUPS_DIR.exists():
             return
-        dirs = sorted([d for d in BACKUPS_DIR.iterdir() if d.is_dir()], key=lambda d: d.name)
+        pinned = set(self.data.get("pinned_backups", []))
+        dirs = sorted([d for d in BACKUPS_DIR.iterdir() if d.is_dir() and d.name not in pinned],
+                      key=lambda d: d.name)
         for d in dirs[:-KEEP_BACKUPS]:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -163,6 +167,179 @@ class InstanceManager:
         self.backup_live("before-restore")
         live = self.live_save_dir()
         _copytree_clean(pathlib.Path(backup), live)
+
+    # ---------------------------------------------------------- backups --
+    # Two kinds live in korok_backups/: save backups (a folder: the live Cemu save before a
+    # switch/restore, named <YYYYmmdd-HHMMSS>_<reason>) and Cemu settings backups
+    # (cemu_settings_<YYYYmmdd-HHMMSS>.xml, before korok changes graphic packs).
+    def all_backups(self) -> list:
+        """[{name, kind ('save'/'settings'), when, reason, size, pinned, path}], newest first."""
+        if not BACKUPS_DIR.exists():
+            return []
+        pinned = set(self.data.get("pinned_backups", []))
+        out = []
+        for p in BACKUPS_DIR.iterdir():
+            if p.is_dir():
+                stamp, _, reason = p.name.partition("_")
+                kind, size = "save", sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                reason = reason.replace("before-", "before ").replace("-", " ") or "save backup"
+            elif p.name.startswith("cemu_settings_") and p.suffix == ".xml":
+                stamp = p.stem[len("cemu_settings_"):]
+                kind, size, reason = "settings", p.stat().st_size, "Cemu graphic pack settings"
+            else:
+                continue
+            try:
+                when = time.strftime("%Y-%m-%d %H:%M:%S", time.strptime(stamp[:15], "%Y%m%d-%H%M%S"))
+            except ValueError:
+                when = ""
+            out.append({"name": p.name, "kind": kind, "when": when, "reason": reason, "size": size,
+                        "pinned": p.name in pinned, "path": p})
+        return sorted(out, key=lambda b: (b["when"], b["name"]), reverse=True)
+
+    def set_pinned(self, name: str, on: bool):
+        pins = [n for n in self.data.get("pinned_backups", []) if n != name]
+        if on:
+            pins.append(name)
+        self.data["pinned_backups"] = pins
+        self._save()
+
+    def delete_backup(self, name: str):
+        p = BACKUPS_DIR / name
+        if p.is_dir():
+            shutil.rmtree(p)
+        elif p.is_file():
+            p.unlink()
+        self.set_pinned(name, False)
+
+    def restore_any_backup(self, name: str):
+        """Put a save backup back as the live save, or a settings backup back as Cemu's settings.xml."""
+        p = BACKUPS_DIR / name
+        if p.is_dir():
+            self.restore_backup(p)
+        elif p.is_file():
+            self._require_cemu_closed()
+            target = self.cemu_settings_file()
+            if target.is_file():
+                shutil.copy2(target, BACKUPS_DIR / f"cemu_settings_{time.strftime('%Y%m%d-%H%M%S')}.xml")
+            shutil.copy2(p, target)
+        else:
+            raise InstanceError("That backup no longer exists.")
+
+    # ------------------------------------------------- export / import --
+    EXPORT_FORMAT = "korok-backup-1"
+
+    def export_zip(self, dest, backup_names=(), slot_ids=()) -> str:
+        """Writes chosen backups and save slots (save + graphic packs + ReShade preset +
+        profile name) into one .zip. Returns a short summary."""
+        dest = pathlib.Path(dest)
+        if slot_ids and self.active() in slot_ids and not self.cemu_running():
+            self.sync_back()                     # include the latest progress
+        manifest = {"format": self.EXPORT_FORMAT, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "backups": [], "slots": []}
+        tmp = dest.with_name(dest.name + ".korok_tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            for name in backup_names:
+                p = BACKUPS_DIR / name
+                if p.is_dir():
+                    for f in sorted(p.rglob("*")):
+                        if f.is_file():
+                            z.write(f, f"backups/{name}/{f.relative_to(p).as_posix()}")
+                elif p.is_file():
+                    z.write(p, f"backups/{name}")
+                else:
+                    continue
+                manifest["backups"].append({"name": name, "pinned": name in self.data.get("pinned_backups", [])})
+            for iid in slot_ids:
+                d = self.data["instances"].get(iid)
+                if d is None:
+                    continue
+                src = self.inst_dir(iid)
+                if src.exists():
+                    for f in sorted(src.rglob("*")):
+                        if f.is_file():
+                            z.write(f, f"slots/{iid}/save/{f.relative_to(src).as_posix()}")
+                rs = d.get("reshade") or ""
+                if rs and rs != RESHADE_OFF and (RESHADE_DIR / f"{rs}.ini").is_file():
+                    z.write(RESHADE_DIR / f"{rs}.ini", f"reshade/{rs}.ini")
+                manifest["slots"].append({"id": iid, **{k: d.get(k) for k in
+                                         ("name", "playlist", "notes", "created", "last_played",
+                                          "graphic_packs", "reshade")}})
+            z.writestr("korok_export.json", json.dumps(manifest, indent=1))
+        os.replace(tmp, dest)
+        return f"Exported {len(manifest['backups'])} backup(s) and {len(manifest['slots'])} save slot(s)."
+
+    def import_zip(self, src) -> str:
+        """Adds the backups and save slots from a korok export. Nothing existing is replaced:
+        names that are taken get a suffix. Imported backups are kept (pinned)."""
+        with zipfile.ZipFile(src) as z:
+            try:
+                manifest = json.loads(z.read("korok_export.json"))
+            except KeyError:
+                raise InstanceError("This isn't a korok backup export (no korok_export.json inside).")
+            if manifest.get("format") != self.EXPORT_FORMAT:
+                raise InstanceError("This export was made by a different korok version and can't be read.")
+            members = [m for m in z.namelist() if not m.endswith("/")]
+            for m in members:
+                parts = pathlib.PurePosixPath(m).parts
+                if m.startswith("/") or ".." in parts or ":" in m:
+                    raise InstanceError(f"Unsafe path inside the export: {m}")
+
+            def extract(prefix, dest: pathlib.Path):
+                n = 0
+                for m in members:
+                    if m.startswith(prefix):
+                        out = dest / m[len(prefix):]
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        out.write_bytes(z.read(m))
+                        n += 1
+                return n
+
+            BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+            n_b = 0
+            for b in manifest.get("backups", []):
+                name = pathlib.PurePosixPath(str(b.get("name", ""))).name
+                if not name:
+                    continue
+                target, k = BACKUPS_DIR / name, 1
+                while target.exists():
+                    k += 1
+                    stem, dot, ext = name.rpartition(".") if name.endswith(".xml") else (name, "", "")
+                    target = BACKUPS_DIR / (f"{stem}_imported{k}.{ext}" if dot else f"{name}_imported{k}")
+                if f"backups/{name}" in members:          # a single file (settings backup)
+                    target.write_bytes(z.read(f"backups/{name}"))
+                elif not extract(f"backups/{name}/", target):
+                    continue
+                self.set_pinned(target.name, True)
+                n_b += 1
+            n_s = 0
+            profiles = set(self.engine.profile_names()) if hasattr(self.engine, "profile_names") else set()
+            for s in manifest.get("slots", []):
+                old_id = str(s.get("id", ""))
+                base = str(s.get("name") or "Imported save").strip()
+                name, k = base, 1
+                while any(i["name"].lower() == name.lower() for i in self.data["instances"].values()):
+                    k += 1
+                    name = f"{base} (imported{'' if k == 2 else ' ' + str(k - 1)})"
+                iid = self._new_id()
+                dst = self.inst_dir(iid)
+                dst.mkdir(parents=True, exist_ok=True)
+                extract(f"slots/{old_id}/save/", dst)
+                rs = s.get("reshade") or ""
+                if rs and rs != RESHADE_OFF and f"reshade/{rs}.ini" in members \
+                        and not (RESHADE_DIR / f"{rs}.ini").exists():
+                    RESHADE_DIR.mkdir(parents=True, exist_ok=True)
+                    (RESHADE_DIR / f"{rs}.ini").write_bytes(z.read(f"reshade/{rs}.ini"))
+                if rs and rs != RESHADE_OFF and not (RESHADE_DIR / f"{rs}.ini").exists():
+                    rs = ""
+                pl = s.get("playlist") or ""
+                self.data["instances"][iid] = {
+                    "name": name, "playlist": pl if pl in profiles else "", "notes": s.get("notes") or "",
+                    "created": s.get("created") or time.strftime("%Y-%m-%d %H:%M"),
+                    "last_played": s.get("last_played") or "",
+                    "graphic_packs": s.get("graphic_packs") or "<GraphicPack />", "reshade": rs}
+                n_s += 1
+            self._save()
+        return f"Imported {n_b} backup(s) and {n_s} save slot(s)."
 
     # -------------------------------------------------------- instances --
     def _new_id(self):
@@ -346,7 +523,8 @@ class InstanceManager:
             root.append(new)
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
         shutil.copy2(p, BACKUPS_DIR / f"cemu_settings_{time.strftime('%Y%m%d-%H%M%S')}.xml")
-        olds = sorted(BACKUPS_DIR.glob("cemu_settings_*.xml"))
+        pinned = set(self.data.get("pinned_backups", []))
+        olds = sorted(f for f in BACKUPS_DIR.glob("cemu_settings_*.xml") if f.name not in pinned)
         for f in olds[:-KEEP_BACKUPS]:
             f.unlink(missing_ok=True)
         ET.indent(tree)

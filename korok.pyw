@@ -1,3 +1,4 @@
+import os
 import pathlib
 import sys
 
@@ -38,7 +39,7 @@ from PyQt6.QtWidgets import QTabWidget
 
 from korok_engine import KorokEngine, register_bcml_protocol
 from korok_instances import InstanceManager
-from korok_tabs import InstancesTab, ReShadeTab, SaveEditorTab
+from korok_tabs import BackupsTab, InstancesTab, ReShadeTab, SaveEditorTab
 
 
 def display_name_for(file_path: str) -> str:
@@ -368,6 +369,9 @@ class KorokUI(QMainWindow):
         self.main_tabs.addTab(import_page, "Import")
         self.main_tabs.addTab(self.instances_tab, "Save Manager")
         self.main_tabs.addTab(self.editor_tab, "Save Editor")
+        self.backups_tab = BackupsTab(self.engine, self.instance_mgr)
+        self.backups_tab.changed.connect(self.instances_tab.refresh)
+        self.main_tabs.addTab(self.backups_tab, "Backups")
         self.reshade_tab = ReShadeTab(self.engine, self.instance_mgr)
         self.reshade_tab.changed.connect(self.instances_tab.refresh)
         self.main_tabs.addTab(self.reshade_tab, "ReShade")
@@ -446,6 +450,8 @@ class KorokUI(QMainWindow):
             self.instances_tab.refresh()
         elif w is self.editor_tab:
             self.editor_tab.rescan()
+        elif w is self.backups_tab:
+            self.backups_tab.refresh()
         elif w is self.reshade_tab:
             self.reshade_tab.refresh()
 
@@ -804,6 +810,17 @@ class KorokUI(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Started without a console (double-clicked .pyw / pythonw): there's nowhere to print,
+    # so send any output and error messages to logs/korok_console.log instead.
+    if sys.stdout is None or sys.stderr is None:
+        try:
+            _log = open(pathlib.Path(__file__).resolve().parent / "logs" / "korok_console.log",
+                        "a", encoding="utf-8", buffering=1)
+        except OSError:
+            _log = open(os.devnull, "w")
+        sys.stdout = sys.stdout or _log
+        sys.stderr = sys.stderr or _log
+
     # Needed so the background merge workers (spawned processes) behave when
     # this file is re-imported by them.
     import multiprocessing
