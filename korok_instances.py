@@ -192,6 +192,14 @@ class InstanceManager:
         self.data["instances"][iid] = {
             "name": name, "playlist": playlist, "notes": notes,
             "created": time.strftime("%Y-%m-%d %H:%M"), "last_played": ""}
+        if source == "empty":
+            # a new game starts with no graphic packs at all (korok's own pack aside)
+            self.data["instances"][iid]["graphic_packs"] = "<GraphicPack />"
+        elif source in self.data["instances"] and source != iid:
+            src = self.data["instances"][source]
+            for k in ("graphic_packs", "reshade"):
+                if src.get(k):
+                    self.data["instances"][iid][k] = src[k]
         self._save()
         return iid
 
@@ -303,8 +311,8 @@ class InstanceManager:
     # ------------------------------------------- graphic packs / ReShade --
     # Cemu keeps which graphic packs are on, and the preset picked for each, in the
     # <GraphicPack> element of its settings.xml (rewritten when Cemu closes, so only
-    # touched while Cemu is closed). A save slot with its own graphic packs keeps a
-    # copy of that element; korok's own pack entry always stays as it is.
+    # touched while Cemu is closed). Every save slot keeps its own copy of that element
+    # (a new game starts with none); korok's own pack entry always stays as it is.
     def cemu_settings_file(self) -> pathlib.Path:
         return self.engine.user_dir / "settings.xml"
 
@@ -346,18 +354,14 @@ class InstanceManager:
         tree.write(tmp, encoding="utf-8", xml_declaration=True)
         os.replace(tmp, p)
 
-    def set_graphics(self, iid, own_packs: bool, reshade: str):
-        d = self.data["instances"][iid]
-        d["own_graphic_packs"] = bool(own_packs)
-        d["reshade"] = reshade or ""
-        if own_packs and not d.get("graphic_packs") and iid == self.active():
-            self.remember_graphics(iid)
+    def set_reshade(self, iid, reshade: str):
+        self.data["instances"][iid]["reshade"] = reshade or ""
         self._save()
 
     def remember_graphics(self, iid):
-        """Store Cemu's current graphic pack choices in the slot (if it keeps its own)."""
+        """Store Cemu's current graphic pack choices in the slot (every slot keeps its own)."""
         d = self.data["instances"].get(iid)
-        if not d or not d.get("own_graphic_packs"):
+        if not d:
             return
         try:
             xml_text = self.read_graphic_packs()
@@ -371,13 +375,12 @@ class InstanceManager:
         """Put the slot's graphic packs and ReShade preset in place. Returns notes."""
         notes = []
         d = self.data["instances"][iid]
-        if d.get("own_graphic_packs"):
-            if d.get("graphic_packs"):
-                if self.cemu_settings_file().is_file():
-                    self.write_graphic_packs(d["graphic_packs"])
-                    notes.append("Graphic packs set for this slot.")
-            else:
-                self.remember_graphics(iid)      # first time: start from the current choices
+        if d.get("graphic_packs"):
+            if self.cemu_settings_file().is_file():
+                self.write_graphic_packs(d["graphic_packs"])
+                notes.append("Graphic packs set for this slot.")
+        else:
+            self.remember_graphics(iid)      # a slot from before this: start from the current choices
         rs = d.get("reshade") or ""
         if rs:
             note = self.use_reshade_preset(rs)
