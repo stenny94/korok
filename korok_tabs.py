@@ -5,7 +5,7 @@ import sys
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QComboBox, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
@@ -64,13 +64,14 @@ class InstancesTab(QWidget):
         lay = QVBoxLayout(self)
 
         intro = QLabel(
-            "A save slot is its own save file, optionally with a mod profile that is applied for you on switch. Switching swaps the save "
-            "Cemu sees (your game files stay shared). Close Cemu before switching.")
+            "A save slot is its own save file with its own Cemu graphic packs (which packs are on and their "
+            "presets), and optionally a mod profile and ReShade preset, all put in place when you switch. "
+            "A new slot is a brand-new game with no graphic packs on. Close Cemu before switching.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Active", "Save slot", "Last played", "Graphics"])
+        self.table.setHorizontalHeaderLabels(["Active", "Save slot", "Last played", "ReShade"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -93,8 +94,8 @@ class InstancesTab(QWidget):
         self.new_btn = QPushButton("New...")
         self.ren_btn = QPushButton("Rename...")
         self.pl_btn = QPushButton("Set profile...")
-        self.gfx_btn = QPushButton("Graphics...")
-        self.gfx_btn.setToolTip("Give this save slot its own Cemu graphic packs and/or ReShade preset.")
+        self.gfx_btn = QPushButton("ReShade...")
+        self.gfx_btn.setToolTip("Pick the ReShade preset for this save slot.")
         self.del_btn = QPushButton("Delete")
         self.bak_btn = QPushButton("Restore backup...")
         for b in (self.new_btn, self.ren_btn, self.pl_btn, self.gfx_btn, self.del_btn, self.bak_btn):
@@ -357,16 +358,12 @@ class InstancesTab(QWidget):
         name, ok = QInputDialog.getText(self, "New save slot", "Name:")
         if not ok or not name.strip():
             return
-        src, ok = QInputDialog.getItem(
-            self, "New save slot", "Starting save:",
-            ["Copy of my current Cemu save", "Brand-new game (empty save)"], 0, False)
-        if not ok:
-            return
         pl = self._playlist_choice(None)
         if pl is None:
             return
         try:
-            iid = self.mgr.create(name, "current" if src.startswith("Copy") else "empty", pl)
+            # a new save slot is a brand-new game: empty save, no graphic packs
+            iid = self.mgr.create(name, "empty", pl)
             self.refresh(iid)
         except ki.InstanceError as e:
             self.error(e)
@@ -394,50 +391,30 @@ class InstancesTab(QWidget):
 
     @staticmethod
     def _graphics_text(d) -> str:
-        parts = []
-        if d.get("own_graphic_packs"):
-            parts.append("own graphic packs")
         rs = d.get("reshade") or ""
-        if rs:
-            parts.append("ReShade off" if rs == ki.RESHADE_OFF else f"ReShade: {rs}")
-        return ", ".join(parts) or "shared"
+        if not rs:
+            return ""
+        return "ReShade off" if rs == ki.RESHADE_OFF else f"ReShade: {rs}"
 
     def pick_graphics(self):
         iid = self.need()
         if not iid:
             return
         d = self.mgr.info(iid)
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Graphics for {d['name']}")
-        lay = QVBoxLayout(dlg)
-        own = QCheckBox("Keep its own Cemu graphic packs (which packs are on, and their presets)")
-        own.setChecked(bool(d.get("own_graphic_packs")))
-        lay.addWidget(own)
-        note = QLabel("Whatever you set in Cemu's Graphic packs window while playing this slot is kept "
-                      "for it and put back when you switch to it. The korok Mods pack isn't affected. "
-                      "Slots without this share Cemu's settings.")
-        note.setWordWrap(True)
-        lay.addWidget(note)
-        form = QFormLayout()
-        combo = QComboBox()
         choices = [("(leave ReShade as it is)", ""), ("Off (no effects)", ki.RESHADE_OFF)] + \
                   [(n, n) for n in self.mgr.reshade_presets()]
-        for label, value in choices:
-            combo.addItem(label, value)
-        combo.setCurrentIndex(max(0, next((i for i, (_, v) in enumerate(choices)
-                                            if v == (d.get("reshade") or "")), 0)))
-        form.addRow("ReShade preset:", combo)
-        lay.addLayout(form)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        lay.addWidget(bb)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        labels = [c[0] for c in choices]
+        cur = next((i for i, (_, v) in enumerate(choices) if v == (d.get("reshade") or "")), 0)
+        label, ok = QInputDialog.getItem(
+            self, "ReShade", f'ReShade preset for "{d["name"]}" (put in place when you switch to it):',
+            labels, cur, False)
+        if not ok:
             return
-        self.mgr.set_graphics(iid, own.isChecked(), combo.currentData())
-        if iid == self.mgr.active() and combo.currentData():
+        value = choices[labels.index(label)][1]
+        self.mgr.set_reshade(iid, value)
+        if iid == self.mgr.active() and value:
             try:
-                note = self.mgr.use_reshade_preset(combo.currentData())
+                note = self.mgr.use_reshade_preset(value)
                 if note:
                     self.say(note)
             except Exception as e:
@@ -506,7 +483,7 @@ class ReShadeTab(QWidget):
         for b in (self.import_btn, self.use_btn, self.off_btn, self.del_btn, self.open_btn):
             row.addWidget(b)
         lay.addLayout(row)
-        hint = QLabel("Each save slot can pick its own preset (Save Manager > Graphics...). Presets need "
+        hint = QLabel("Each save slot can pick its own preset (Save Manager > ReShade...). Presets need "
                       "the effect files (.fx) they use, which ReShade's installer downloads. While a preset "
                       "is in use, korok turns on Cemu's \"Reshade Compatibility\" graphic pack (and turns it "
                       "off with effects off); Cemu must be closed for that.")
