@@ -220,7 +220,7 @@ class KorokUI(QMainWindow):
 
     # ------------------------------------------------------------------ UI
     def init_ui(self):
-        self.setWindowTitle("korok — Everything Breath of the Wild")
+        self.setWindowTitle("korok")
         self.resize(1020, 720)
 
         main_widget = QWidget()
@@ -813,6 +813,7 @@ if __name__ == "__main__":
             pass
 
     app = QApplication(sys.argv)
+    app.setApplicationName("korok")
     icon_file = pathlib.Path(__file__).resolve().parent / "assets" / ("korok.ico" if sys.platform == "win32" else "korok.png")
     if icon_file.exists():
         app.setWindowIcon(QIcon(str(icon_file)))
