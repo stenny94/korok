@@ -1,16 +1,16 @@
 """korok's mod library and pack builder.
 
-Every mod korok imports is turned into a UKMM mod package (see korok_pack) and
+Every mod korok imports is turned into a UKMM mod package (see korok_import) and
 kept in the library (korok_library/<name>/mod.zip):
 
   UKMM package (.zip)     kept as it is
   BCML package (.bnp)     its merge logs are applied the way UKMM converts BNPs
-                          (korok_bnp), then it's packaged
+                          (korok_import), then it's packaged
   graphic pack / folder   packaged: every changed file stored as a diff against
                           the game's own version
 
 Applying the active profile then deploys all its enabled mods together, the way
-UKMM does (korok_deploy): each changed file is rebuilt from the game's version
+UKMM does (korok_ukmm_native.deploy): each changed file is rebuilt from the game's version
 with every mod's changes merged in load order, written to Cemu's graphicPacks/
 KorokMods, and the game's resource size table is updated for it.
 """
@@ -56,8 +56,7 @@ PACK_FOLDER_NAME = "KorokMods"
 GAME_DIRS = {"content", "aoc"}
 BUILD_VERSION = "10"
 UPDATE_TITLE_IDS = ("101c9400", "101c9500", "101c9300")
-CODE_FILES = ("korok_engine.py", "korok_deploy.py", "korok_ukmm_native.py", "korok_ukmm_formats.py",
-              "korok_rstb.py")
+CODE_FILES = ("korok_engine.py", "korok_ukmm_native.py", "korok_ukmm_formats.py", "korok_rstb.py")
 
 
 def register_bcml_protocol():
@@ -268,8 +267,7 @@ default = true
         """Adds a mod to the library as a UKMM package. Returns a list of warning strings.
         _option_of: internal - set when importing an extra mod folder found in the same
         archive, so it gets its own name and is imported disabled."""
-        import korok_bnp
-        import korok_pack
+        import korok_import
         if not native.available():
             raise RuntimeError("korok needs a few Python packages to read mods. Run:  pip install " +
                                " ".join(native.missing_requirements() or ["oead", "cbor2", "zstandard"]))
@@ -316,7 +314,7 @@ default = true
                 # BCML package: apply its logs onto the game's files, like UKMM's BNP converter
                 src = work / "bnp"
                 shutil.copytree(bnp_root, src)
-                meta = korok_bnp.convert_bnp_folder(src, dump, self.game_language(dump), log=self._log)
+                meta = korok_import.convert_bnp_folder(src, dump, self.game_language(dump), log=self._log)
                 groups = native.Package.groups_from_meta(meta)
                 valid = [o["path"] for g in groups for o in g["options"]]
                 chosen = [o for o in (options if options is not None
@@ -332,7 +330,7 @@ default = true
                 src = roots[0]
                 extra_roots = [] if _option_of else roots[1:]
                 rules = src / "rules.txt"
-                meta = korok_bnp.meta_from_rules(rules.read_text(encoding="utf-8-sig", errors="replace")
+                meta = korok_import.meta_from_rules(rules.read_text(encoding="utf-8-sig", errors="replace")
                                                  if rules.is_file() else "", mod_display_name)
                 if _option_of:
                     meta["name"] = mod_display_name
@@ -342,7 +340,7 @@ default = true
             dest = self.staging_dir / name
             was_known = dest.exists()
             tmp_pkg = work / PACKAGE_NAME
-            packer = korok_pack.pack_folder(src, tmp_pkg, meta, dump, log=self._log, loose_like_bcml=True)
+            packer = korok_import.pack_folder(src, tmp_pkg, meta, dump, log=self._log, loose_like_bcml=True)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.move(str(tmp_pkg), str(dest / PACKAGE_NAME))
             self._write_meta(dest, {"name": name, "source": kind, "options": chosen,
@@ -463,8 +461,8 @@ default = true
         if not raw:
             return []
         try:
-            import korok_bnp
-            return native.Package.groups_from_meta(korok_bnp.meta_from_info(json.loads(raw.decode("utf-8-sig"))))
+            import korok_import
+            return native.Package.groups_from_meta(korok_import.meta_from_info(json.loads(raw.decode("utf-8-sig"))))
         except Exception:
             return []
 
@@ -687,7 +685,6 @@ default = true
         """Deploys the active profile's enabled mods to graphicPacks/KorokMods.
         Skips the work when nothing changed (unless force).
         progress_cb(fraction 0..1, message) may be called from a worker thread."""
-        import korok_deploy
         import korok_rstb
         cb = progress_cb or (lambda frac, text: None)
         if not self.cemu_dir.exists():
@@ -727,7 +724,7 @@ default = true
                         floor[k] = max(floor.get(k, 0), int(v))
                 except Exception:
                     pass
-            conv = korok_deploy.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"),
+            conv = native.deploy(mods, dump, out, progress=lambda f, t: cb(0.02 + f * 0.95, f"Building {t}"),
                                        rstb_floor=floor)
         (out / "rules.txt").write_text(self.generate_rules_txt(), encoding="utf-8")
         for legacy in self.legacy_pack_dirs:
