@@ -54,7 +54,7 @@ META_NAME = "korok.json"
 BNP_RSTB_NAME = "bcml_rstb.json"    # a BNP's own size-table values
 PACK_FOLDER_NAME = "KorokMods"
 GAME_DIRS = {"content", "aoc"}
-BUILD_VERSION = "9"
+BUILD_VERSION = "10"
 UPDATE_TITLE_IDS = ("101c9400", "101c9500", "101c9300")
 CODE_FILES = ("korok_engine.py", "korok_deploy.py", "korok_ukmm_native.py", "korok_ukmm_formats.py",
               "korok_rstb.py")
@@ -374,7 +374,7 @@ default = true
             dest = self.staging_dir / name
             was_known = dest.exists()
             tmp_pkg = work / PACKAGE_NAME
-            packer = korok_pack.pack_folder(src, tmp_pkg, meta, dump, log=self._log)
+            packer = korok_pack.pack_folder(src, tmp_pkg, meta, dump, log=self._log, loose_like_bcml=True)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.move(str(tmp_pkg), str(dest / PACKAGE_NAME))
             self._write_meta(dest, {"name": name, "source": kind, "options": chosen,
@@ -387,6 +387,12 @@ default = true
                 labels = {o["path"]: o["name"] for g in groups for o in g["options"]}
                 self.import_notes.append("Options used: " + (", ".join(labels.get(o, o) for o in chosen)
                                                              or "none") + ".")
+            if packer.left_out:
+                self._log(f"{name}: loose files the game reads from inside packs, left out: "
+                          + ", ".join(sorted(set(packer.left_out))))
+                self.import_notes.append(
+                    f"{len(set(packer.left_out))} loose file(s) were left out because the game only reads "
+                    "those files from inside its packs (as with BCML or Cemu on their own).")
             whole = sorted({c.rpartition(".")[2] for c, why in packer.kept_whole if "not merged by korok" in why})
             if whole:
                 self.import_notes.append(
