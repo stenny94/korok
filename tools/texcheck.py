@@ -1,7 +1,7 @@
 """Compares one model's texture files: the game's own copy, the mod's copy (from a
-.bnp/.zip/folder), and what Korok put in the Korok Mods pack.
+.bnp/.zip/folder), and what korok put in the korok Mods pack.
 
-Usage (from the Korok folder):
+Usage (from the korok folder):
     python tools/texcheck.py "C:\\path\\to\\ZeldasBallad.bnp" Armor_046
 """
 import json
@@ -59,10 +59,10 @@ def main(mod, model):
             for h in hits:
                 print(f"  mod  ({h.relative_to(src)}): {head(h.read_bytes())}")
             k = pack / "content" / name
-            print(f"  Korok pack: {head(k.read_bytes()) if k.exists() else 'missing'}")
+            print(f"  korok pack: {head(k.read_bytes()) if k.exists() else 'missing'}")
             print(f"  size table: game {vanilla_table.get(canon) if vanilla_table else '?'}, "
                   f"mod's rstb.json {rstb_log.get(canon, rstb_log.get(name, '-'))}, "
-                  f"Korok pack {table.get(canon) if table else '?'}")
+                  f"korok pack {table.get(canon) if table else '?'}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

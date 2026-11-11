@@ -1,6 +1,6 @@
-"""Builds Korok's graphic pack from the enabled mods: UKMM's deploy.
+"""Builds korok's graphic pack from the enabled mods: UKMM's deploy.
 
-Every mod in Korok's library is a UKMM package (see korok_library). To deploy,
+Every mod in korok's library is a UKMM package (see korok_library). To deploy,
 each file any enabled mod lists is rebuilt from vanilla with every mod's
 version folded in, in load order (ModUnpacker::build_file), then written to
 the graphic pack's content/ or aoc/0010/. Afterwards the game's resource size

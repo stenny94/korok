@@ -113,7 +113,7 @@ _FACTORY_EXTS = {
 # size, alignment, parse size. Tex (Tex1/Tex2 texture files) is aligned to 0x2000: rstb-rust has
 # 0x4 there, but the game's own table holds exactly file size + 0x2000 for these (checked on
 # Armor_046.Tex1/Tex2), and entries that small leave textures garbled in game.
-# (int = simple, None = complex: needs parsing, which Korok
+# (int = simple, None = complex: needs parsing, which korok
 # doesn't port, so it is estimated instead as UKMM does when parsing gives nothing)
 _FACTORY_INFO = {
     "Sarc": (0x3C, 0x80, 0), "EventPack": (0x3C, 0x80, 0), "Tex": (0x20, 0x2000, 0),

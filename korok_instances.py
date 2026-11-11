@@ -1,4 +1,4 @@
-"""Korok instances: each instance = its own save folder + a mod playlist.
+"""korok instances: each instance = its own save folder + a mod playlist.
 
 Switching copies the live Cemu save folder back into the instance you are
 leaving, then puts the target instance's save in place. The live folder is

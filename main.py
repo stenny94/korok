@@ -220,7 +220,7 @@ class KorokUI(QMainWindow):
 
     # ------------------------------------------------------------------ UI
     def init_ui(self):
-        self.setWindowTitle("Korok — Everything Breath of the Wild")
+        self.setWindowTitle("korok — Everything Breath of the Wild")
         self.resize(1020, 720)
 
         main_widget = QWidget()
@@ -322,7 +322,7 @@ class KorokUI(QMainWindow):
         intro = QLabel(
             "Import mods into your library (.bnp, .zip, .7z, UKMM packages, or an unpacked folder). "
             "New mods are added to the active profile; choose which mods are on and their order on "
-            "the Mods tab. <b>Apply to Cemu</b> builds the Korok Mods graphic pack from the active "
+            "the Mods tab. <b>Apply to Cemu</b> builds the korok Mods graphic pack from the active "
             "profile.")
         intro.setWordWrap(True)
         imp.addWidget(intro)
@@ -391,8 +391,8 @@ class KorokUI(QMainWindow):
         form.addRow("Cemu.exe", r)
         r = QHBoxLayout(); r.addWidget(it.game_edit); r.addWidget(it.game_browse); r.addWidget(it.game_dir_browse)
         form.addRow("Game", r)
-        hint = QLabel("The Cemu folder is where Korok writes the Korok Mods graphic pack and finds your "
-                      "game files (mlc01). Cemu.exe and the game are filled in automatically when Korok "
+        hint = QLabel("The Cemu folder is where korok writes the korok Mods graphic pack and finds your "
+                      "game files (mlc01). Cemu.exe and the game are filled in automatically when korok "
                       "finds them there; the game can be a file (.rpx / .wua) or the game's folder.")
         hint.setWordWrap(True)
         form.addRow(hint)
@@ -401,7 +401,7 @@ class KorokUI(QMainWindow):
         mods = QGroupBox("Mods")
         ml = QVBoxLayout(mods)
         self.auto_apply_chk = QCheckBox("Apply automatically when switching profiles")
-        self.auto_apply_chk.setToolTip("Rebuild the Korok Mods pack as soon as you pick another profile "
+        self.auto_apply_chk.setToolTip("Rebuild the korok Mods pack as soon as you pick another profile "
                                        "on the Mods tab.")
         self.auto_apply_chk.setChecked(bool(self.engine.state.get("auto_apply", False)))
         self.auto_apply_chk.toggled.connect(self.on_auto_apply_toggled)
@@ -712,7 +712,7 @@ class KorokUI(QMainWindow):
         elif self.engine.last_build_skipped:
             lines.append("Nothing to do.")
         else:
-            lines.append("Korok Mods package successfully updated and applied to Cemu!")
+            lines.append("korok Mods package successfully updated and applied to Cemu!")
         for name, _, err, _n in failed:
             lines.append(f"\nFailed: {name}\n  {err}")
         for name, warnings, _, notes in ok:
@@ -787,7 +787,7 @@ class KorokUI(QMainWindow):
     def closeEvent(self, event):
         if self.worker is not None:
             QMessageBox.information(
-                self, "Busy", "Korok is still working. Please wait for it to finish."
+                self, "Busy", "korok is still working. Please wait for it to finish."
             )
             event.ignore()
         else:
@@ -802,10 +802,10 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
     if sys.platform == "win32":
-        # Own taskbar identity, so Windows shows Korok's icon instead of Python's
+        # Own taskbar identity, so Windows shows korok's icon instead of Python's
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Korok.ModManager")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("korok.ModManager")
         except Exception:
             pass
 

@@ -1,4 +1,4 @@
-"""Save Manager tab and Save Editor tab for Korok."""
+"""Save Manager tab and Save Editor tab for korok."""
 import pathlib
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -373,7 +373,7 @@ class InstancesTab(QWidget):
     def restore_backup(self):
         bks = self.mgr.list_backups()
         if not bks:
-            QMessageBox.information(self, "Backups", "No backups yet. Korok makes one before every switch.")
+            QMessageBox.information(self, "Backups", "No backups yet. korok makes one before every switch.")
             return
         name, ok = QInputDialog.getItem(self, "Restore backup", "Put this backup back as the live Cemu save:",
                                         [b.name for b in bks], 0, False)
@@ -403,7 +403,7 @@ class SaveEditorTab(QWidget):
         lay = QVBoxLayout(self)
 
         warn = QLabel(
-            "Close Cemu before editing. Korok backs up the save file before every write and "
+            "Close Cemu before editing. korok backs up the save file before every write and "
             "refuses to write if anything looks wrong. This editor has had limited testing "
             "against real saves, so keep your own copy too.")
         warn.setWordWrap(True)
