@@ -10,6 +10,8 @@ on **Cemu**. korok imports mods, merges them together, and writes the result int
 Cemu graphic pack so they work together without conflicts. It also keeps separate save files
 for different playthroughs and lets you edit them.
 
+<p align="center"><img src="assets/screenshot.png" alt="korok's Mods tab: profiles on the left, the active profile's mods and load order on the right, Apply and Launch buttons at the bottom" width="800"></p>
+
 This was made as a stand in for BCML and UKMM because I didn't like how complicated they were to setup and use. If something didn't work, I didn't know why. That's why this was created, it is meant to just "work".
 
 > korok does not include any game files or mods. You need your own legally
